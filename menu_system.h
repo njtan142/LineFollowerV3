@@ -146,17 +146,17 @@ private:
   void updateSelectionIndicators(uint8_t oldSelection, uint8_t newSelection) {
     display->setFont(u8x8_font_8x13_1x2_f);
     
-    // Only update if both old and new selections are visible
+    // Update old selection (remove indicator) - only if visible
     if (oldSelection >= scrollOffset && oldSelection < scrollOffset + visibleItems) {
       uint8_t oldRow = 2 + ((oldSelection - scrollOffset) * 2);
       display->setCursor(0, oldRow);
-      display->print(" ");
+      display->drawString(0, oldRow, " ");  // Single char update
     }
     
+    // Update new selection (add indicator) - only if visible
     if (newSelection >= scrollOffset && newSelection < scrollOffset + visibleItems) {
       uint8_t newRow = 2 + ((newSelection - scrollOffset) * 2);
-      display->setCursor(0, newRow);
-      display->print(">");
+      display->drawString(0, newRow, ">");  // Single char update
     }
   }
   
@@ -174,21 +174,24 @@ private:
       uint8_t itemIndex = scrollOffset + visiblePos;
       
       if (itemIndex < itemCount) {
-        display->setCursor(0, 2 + (visiblePos * 2));  // Rows: 2, 4, 6
+        uint8_t row = 2 + (visiblePos * 2);  // Rows: 2, 4, 6
         
-        // Show selection indicator
-        if (itemIndex == currentSelection) {
-          display->print(">");
-        } else {
-          display->print(" ");
-        }
-        display->print(menuItems[itemIndex]);
+        // Build the entire line in a buffer first
+        char lineBuffer[17];  // 16 chars + null terminator
+        memset(lineBuffer, ' ', 16);
+        lineBuffer[16] = '\0';
         
-        // Clear rest of the line to remove any leftover characters
-        uint8_t textLen = strlen(menuItems[itemIndex]) + 1; // +1 for indicator
-        for (uint8_t j = textLen; j < 16; j++) {
-          display->print(" ");
-        }
+        // Add selection indicator
+        lineBuffer[0] = (itemIndex == currentSelection) ? '>' : ' ';
+        
+        // Add menu text
+        const char* itemText = menuItems[itemIndex];
+        uint8_t textLen = strlen(itemText);
+        if (textLen > 15) textLen = 15;  // Max 15 chars (1 reserved for indicator)
+        memcpy(lineBuffer + 1, itemText, textLen);
+        
+        // Draw entire line at once using drawString (faster than print)
+        display->drawString(0, row, lineBuffer);
       }
     };
     
@@ -266,6 +269,7 @@ public:
     pinMode(buttonPin, INPUT);
     pinMode(potEnablePin, OUTPUT);
     digitalWrite(potEnablePin, HIGH);
+    
     
     // Draw initial menu
     drawFullMenu();
