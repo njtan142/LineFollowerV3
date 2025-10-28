@@ -1,7 +1,9 @@
 /**
- * Potentiometer and Button Test
- * Tests the potentiometer reading on pin A7 and button on pin 5
- * Displays values on OLED and Serial Monitor
+ * Line Follower Robot - Main Menu Implementation
+ * Features:
+ * - Main menu with potentiometer scrolling
+ * - Button selection
+ * - Clean U8x8 text-based display
  */
 
 #include <U8x8lib.h>
@@ -13,64 +15,140 @@
 // Input Pins
 #define POT_PIN A7
 #define BUTTON_PIN 5
-#define POT_ENABLE_PIN 9  // Enable pin for potentiometer multiplexing
+#define POT_ENABLE_PIN 9
 
 // Create display object - U8x8 is text-only mode (16x8 characters)
 U8X8_SSD1306_128X64_NONAME_SW_I2C u8x8(SOFT_SCL, SOFT_SDA, U8X8_PIN_NONE);
 
+// Menu items
+const char* menuItems[] = {
+  "CFG",      // Settings/Configuration
+  "CALIBRT",  // Calibration
+  "RUN"       // Start running
+};
+const uint8_t MENU_ITEM_COUNT = 3;
+
+// State variables
+uint8_t currentSelection = 0;
+uint8_t lastSelection = 255;  // Force initial draw
+int lastPotValue = -1;
+bool lastButtonState = false;
+bool needsRedraw = true;
+
+// Potentiometer helper - converts pot value to menu steps
+uint8_t getMenuSelection(int potValue, uint8_t itemCount) {
+  // Map potentiometer value (0-1023) to menu items (0 to itemCount-1)
+  // Add small hysteresis to prevent jitter
+  int steps = 1000 / itemCount;
+  return constrain(potValue / steps, 0, itemCount - 1);
+}
+
+// Button debouncing
+bool readButtonDebounced() {
+  static unsigned long lastDebounceTime = 0;
+  static bool lastReading = false;
+  static bool buttonState = false;
+  
+  bool reading = (digitalRead(BUTTON_PIN) == HIGH);
+  
+  if (reading != lastReading) {
+    lastDebounceTime = millis();
+  }
+  
+  if ((millis() - lastDebounceTime) > 50) {  // 50ms debounce
+    if (reading != buttonState) {
+      buttonState = reading;
+    }
+  }
+  
+  lastReading = reading;
+  return buttonState;
+}
+
+// Draw the main menu
+void drawMainMenu() {
+  u8x8.clear();
+  u8x8.setFont(u8x8_font_8x13_1x2_f);
+  
+  // Title
+  u8x8.setCursor(0, 0);
+  u8x8.print("MENU");
+  
+  // Menu items at rows 2, 4, 6 (3 items total)
+  for (uint8_t i = 0; i < MENU_ITEM_COUNT; i++) {
+    u8x8.setCursor(2, 2 + (i * 2));  // Rows: 2, 4, 6
+    
+    // Show selection indicator
+    if (i == currentSelection) {
+      u8x8.print(">");
+    } else {
+      u8x8.print(" ");
+    }
+    u8x8.print(menuItems[i]);
+  }
+  
+  needsRedraw = false;
+}
+
 void setup() {
-  Serial.begin(9600);  // Changed to 9600 for stability
-  delay(1000);  // Wait for serial to stabilize
-  Serial.println("Potentiometer & Button Test");
+  Serial.begin(9600);
+  delay(100);
+  Serial.println("Line Follower - Main Menu");
   
   // Initialize input pins
   pinMode(POT_PIN, INPUT);
-  pinMode(BUTTON_PIN, INPUT);  // Button reads HIGH when pressed
+  pinMode(BUTTON_PIN, INPUT);
   pinMode(POT_ENABLE_PIN, OUTPUT);
   digitalWrite(POT_ENABLE_PIN, HIGH);  // Enable potentiometer
   
   // Initialize display
   u8x8.begin();
-  u8x8.setFont(u8x8_font_8x13_1x2_f);  // Larger, clearer font
+  u8x8.setPowerSave(0);
   
-  Serial.println("Display initialized");
-  Serial.println("Reading potentiometer on A7 and button on pin 5...");
+  Serial.println("System ready");
+  
+  // Draw initial menu
+  drawMainMenu();
 }
 
 void loop() {
-  // Ensure potentiometer is enabled
+  // Enable potentiometer and read value
   digitalWrite(POT_ENABLE_PIN, HIGH);
-  delayMicroseconds(100);  // Give it time to settle
-  
-  // Read potentiometer value (0-1023)
+  delayMicroseconds(100);
   int potValue = analogRead(POT_PIN);
   
-  // Read button state (HIGH when pressed)
-  bool buttonPressed = (digitalRead(BUTTON_PIN) == HIGH);
+  // Get current selection from potentiometer
+  currentSelection = getMenuSelection(potValue, MENU_ITEM_COUNT);
   
-  // Print to Serial Monitor
-  Serial.print("POT: ");
-  Serial.print(potValue);
-  Serial.print(" | Button: ");
-  Serial.println(buttonPressed ? "PRESSED" : "Released");
+  // Read button state
+  bool buttonPressed = readButtonDebounced();
+  bool buttonJustPressed = buttonPressed && !lastButtonState;
   
-  // Display on OLED
-  u8x8.setCursor(0, 0);
-  u8x8.print("INPUT TEST");
+  // Check if selection changed
+  if (currentSelection != lastSelection) {
+    needsRedraw = true;
+    lastSelection = currentSelection;
+    
+    Serial.print("Selected: ");
+    Serial.println(menuItems[currentSelection]);
+  }
   
-  u8x8.setCursor(0, 2);
-  u8x8.print("POT: ");
-  u8x8.print(potValue);
-  u8x8.print("    ");  // Extra spaces to clear old digits
+  // Redraw if needed
+  if (needsRedraw) {
+    drawMainMenu();
+  }
   
-  u8x8.setCursor(0, 4);
-  u8x8.print("BTN: ");
-  u8x8.print(buttonPressed ? "PRESSED " : "Released");
+  // Handle button press
+  if (buttonJustPressed) {
+    Serial.print("Button pressed! Selected: ");
+    Serial.println(menuItems[currentSelection]);
+    
+    // TODO: Navigate to selected menu item
+    // For now, just flash the selection briefly
+    needsRedraw = true;
+  }
   
-  u8x8.setCursor(0, 6);
-  u8x8.print("T:");
-  u8x8.print(millis() / 1000.0, 1);
-  u8x8.print("s   ");
+  lastButtonState = buttonPressed;
   
-  delay(100);
+  delay(50);  // Small delay for stability
 }
