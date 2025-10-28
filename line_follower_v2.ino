@@ -35,12 +35,50 @@ int lastPotValue = -1;
 bool lastButtonState = false;
 bool needsRedraw = true;
 
-// Potentiometer helper - converts pot value to menu steps
-uint8_t getMenuSelection(int potValue, uint8_t itemCount) {
-  // Map potentiometer value (0-1023) to menu items (0 to itemCount-1)
-  // Add small hysteresis to prevent jitter
-  int steps = 1000 / itemCount;
-  return constrain(potValue / steps, 0, itemCount - 1);
+// Potentiometer reading with deadzone (80% of range)
+int readPotClamped() {
+  digitalWrite(POT_ENABLE_PIN, HIGH);
+  delayMicroseconds(100);
+  int raw = analogRead(POT_PIN);
+  
+  // Use middle 80% of the range (102 to 921 maps to 0 to 1023)
+  const int DEADZONE = (1024 * 10) / 100;  // 10% on each side
+  const int MIN_VAL = DEADZONE;            // 102
+  const int MAX_VAL = 1024 - DEADZONE;     // 922
+  
+  // Clamp and remap
+  if (raw < MIN_VAL) raw = MIN_VAL;
+  if (raw > MAX_VAL) raw = MAX_VAL;
+  
+  return map(raw, MIN_VAL, MAX_VAL, 0, 1023);
+}
+
+// Get steps from potentiometer movement
+// divisor: larger values = more sensitive (e.g., 1000/itemCount for menu navigation)
+int getSteps(int divisor) {
+  int potValue = readPotClamped();
+  
+  if (lastPotValue == -1) {
+    lastPotValue = potValue;
+    return 0;
+  }
+  
+  int delta = lastPotValue - potValue;
+  int steps = 0;
+  
+  if (abs(delta) >= divisor) {
+    steps = delta / divisor;
+    lastPotValue = potValue;
+  }
+  
+  return steps;
+}
+
+// Constrain selection within valid range
+uint8_t constrainSelection(int selection, uint8_t maxItems) {
+  if (selection < 0) return 0;
+  if (selection >= maxItems) return maxItems - 1;
+  return selection;
 }
 
 // Button debouncing
@@ -65,7 +103,7 @@ bool readButtonDebounced() {
   return buttonState;
 }
 
-// Draw the main menu
+// Draw the main menu (initial full draw)
 void drawMainMenu() {
   u8x8.clear();
   u8x8.setFont(u8x8_font_8x13_1x2_f);
@@ -90,6 +128,19 @@ void drawMainMenu() {
   needsRedraw = false;
 }
 
+// Update only the selection indicators (optimized partial redraw)
+void updateSelection(uint8_t oldSelection, uint8_t newSelection) {
+  u8x8.setFont(u8x8_font_8x13_1x2_f);
+  
+  // Clear old selection indicator
+  u8x8.setCursor(2, 2 + (oldSelection * 2));
+  u8x8.print(" ");
+  
+  // Draw new selection indicator
+  u8x8.setCursor(2, 2 + (newSelection * 2));
+  u8x8.print(">");
+}
+
 void setup() {
   Serial.begin(9600);
   delay(100);
@@ -112,31 +163,32 @@ void setup() {
 }
 
 void loop() {
-  // Enable potentiometer and read value
-  digitalWrite(POT_ENABLE_PIN, HIGH);
-  delayMicroseconds(100);
-  int potValue = analogRead(POT_PIN);
+  // Map potentiometer directly to menu selection
+  int potValue = readPotClamped();
   
-  // Get current selection from potentiometer
-  currentSelection = getMenuSelection(potValue, MENU_ITEM_COUNT);
+  // Map pot range (0-1023) to menu items (0 to MENU_ITEM_COUNT-1)
+  // Invert so that high pot value = first item (index 0)
+  uint8_t newSelection = map(potValue, 0, 1023, MENU_ITEM_COUNT - 1, 0);
+  newSelection = constrain(newSelection, 0, MENU_ITEM_COUNT - 1);
   
-  // Read button state
-  bool buttonPressed = readButtonDebounced();
-  bool buttonJustPressed = buttonPressed && !lastButtonState;
+  Serial.print("Potentiometer reading: ");
+  Serial.print(potValue);
+  Serial.print(" -> Selection: ");
+  Serial.println(newSelection);
   
-  // Check if selection changed
-  if (currentSelection != lastSelection) {
-    needsRedraw = true;
+  // Update display if selection changed
+  if (newSelection != currentSelection) {
+    uint8_t oldSelection = currentSelection;
+    currentSelection = newSelection;
+    updateSelection(oldSelection, currentSelection);  // Partial redraw
     lastSelection = currentSelection;
-    
     Serial.print("Selected: ");
     Serial.println(menuItems[currentSelection]);
   }
   
-  // Redraw if needed
-  if (needsRedraw) {
-    drawMainMenu();
-  }
+  // Read button state
+  bool buttonPressed = readButtonDebounced();
+  bool buttonJustPressed = buttonPressed && !lastButtonState;
   
   // Handle button press
   if (buttonJustPressed) {
