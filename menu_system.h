@@ -11,6 +11,9 @@
 
 class MenuSystem {
 private:
+  static constexpr unsigned long SCROLL_DEBOUNCE_MS = 500;
+  static constexpr unsigned long INDICATOR_DEBOUNCE_MS = 100;
+
   U8X8_SSD1306_128X64_NONAME_SW_I2C* display;
   
   // Input pins
@@ -33,6 +36,11 @@ private:
   bool lastButtonState;
   bool buttonJustPressed;
   bool needsRedraw;
+  
+  // Selection debouncing
+  uint8_t pendingSelection;
+  unsigned long selectionDebounceTime;
+  bool selectionStable;
   
   // Debounce timing
   unsigned long lastDebounceTime;
@@ -257,7 +265,10 @@ public:
       needsRedraw(true),
       lastDebounceTime(0),
       lastButtonReading(false),
-      buttonState(false) {
+      buttonState(false),
+      pendingSelection(0),
+      selectionDebounceTime(0),
+      selectionStable(false) {
   }
   
   /**
@@ -296,12 +307,46 @@ public:
     uint8_t newSelection = map(potValue, 0, 1023, itemCount - 1, 0);
     newSelection = constrain(newSelection, 0, itemCount - 1);
     
-    // Update display if selection changed
-    if (newSelection != currentSelection) {
+    // Debounce the selection to prevent jitter at boundaries
+    // Use different debounce times: 500ms for scroll changes, 100ms for indicator-only changes
+    if (newSelection != pendingSelection) {
+      // Selection changed, reset debounce timer
+      pendingSelection = newSelection;
+      selectionDebounceTime = millis();
+      selectionStable = false;
+    } else {
+      // Selection is same as pending, check if it's been stable long enough
+      if (!selectionStable) {
+        // Calculate what the scroll offset would be for the pending selection
+        uint8_t pendingScrollOffset;
+        if (itemCount <= visibleItems) {
+          pendingScrollOffset = 0;
+        } else if (pendingSelection == 0) {
+          pendingScrollOffset = 0;
+        } else if (pendingSelection >= itemCount - 1) {
+          pendingScrollOffset = itemCount - visibleItems;
+        } else {
+          pendingScrollOffset = pendingSelection - 1;
+          if (pendingScrollOffset > itemCount - visibleItems) {
+            pendingScrollOffset = itemCount - visibleItems;
+          }
+        }
+        
+        // Determine required debounce time based on whether scroll would change
+        unsigned long requiredDebounce = (pendingScrollOffset != scrollOffset) ? SCROLL_DEBOUNCE_MS : INDICATOR_DEBOUNCE_MS;
+        
+        if ((millis() - selectionDebounceTime) >= requiredDebounce) {
+          selectionStable = true;
+        }
+      }
+    }
+    
+    // Only update the actual selection if it's been debounced
+    if (selectionStable && pendingSelection != currentSelection) {
       uint8_t oldSelection = currentSelection;
       uint8_t oldScrollOffset = scrollOffset;
       
-      currentSelection = newSelection;
+      currentSelection = pendingSelection;
       updateScrollOffset();
       
       // Check if we need scroll update or just indicator update
