@@ -21,12 +21,17 @@ private:
   // Menu data
   const char** menuItems;
   uint8_t itemCount;
+  uint8_t visibleItems;  // Number of items visible at once (3 for scrolling menus)
+  const char* title;     // Menu title
   
   // State variables
   uint8_t currentSelection;
   uint8_t lastSelection;
+  uint8_t scrollOffset;
+  uint8_t lastScrollOffset;
   int lastPotValue;
   bool lastButtonState;
+  bool buttonJustPressed;
   bool needsRedraw;
   
   // Debounce timing
@@ -77,6 +82,32 @@ private:
   }
   
   /**
+   * Calculate scroll offset to keep selection visible and centered when possible
+   */
+  void updateScrollOffset() {
+    if (itemCount <= visibleItems) {
+      // All items fit on screen, no scrolling needed
+      scrollOffset = 0;
+      return;
+    }
+    
+    // Try to center the selection
+    if (currentSelection == 0) {
+      scrollOffset = 0;  // At top
+    } else if (currentSelection >= itemCount - 1) {
+      scrollOffset = itemCount - visibleItems;  // At bottom
+    } else {
+      // Center the selection (put it at position 1 of 3 visible items)
+      scrollOffset = currentSelection - 1;
+      
+      // Clamp to valid range
+      if (scrollOffset > itemCount - visibleItems) {
+        scrollOffset = itemCount - visibleItems;
+      }
+    }
+  }
+  
+  /**
    * Draw full menu (initial or forced redraw)
    */
   void drawFullMenu() {
@@ -85,22 +116,28 @@ private:
     
     // Title
     display->setCursor(0, 0);
-    display->print("MENU");
+    display->print(title);
     
     // Menu items at rows 2, 4, 6
-    for (uint8_t i = 0; i < itemCount; i++) {
-      display->setCursor(2, 2 + (i * 2));  // Rows: 2, 4, 6
+    uint8_t itemsToShow = min(visibleItems, itemCount);
+    for (uint8_t i = 0; i < itemsToShow; i++) {
+      uint8_t itemIndex = scrollOffset + i;
       
-      // Show selection indicator
-      if (i == currentSelection) {
-        display->print(">");
-      } else {
-        display->print(" ");
+      if (itemIndex < itemCount) {
+        display->setCursor(0, 2 + (i * 2));  // Rows: 2, 4, 6
+        
+        // Show selection indicator
+        if (itemIndex == currentSelection) {
+          display->print(">");
+        } else {
+          display->print(" ");
+        }
+        display->print(menuItems[itemIndex]);
       }
-      display->print(menuItems[i]);
     }
     
     needsRedraw = false;
+    lastScrollOffset = scrollOffset;
   }
   
   /**
@@ -109,13 +146,74 @@ private:
   void updateSelectionIndicators(uint8_t oldSelection, uint8_t newSelection) {
     display->setFont(u8x8_font_8x13_1x2_f);
     
-    // Clear old selection indicator
-    display->setCursor(2, 2 + (oldSelection * 2));
-    display->print(" ");
+    // Only update if both old and new selections are visible
+    if (oldSelection >= scrollOffset && oldSelection < scrollOffset + visibleItems) {
+      uint8_t oldRow = 2 + ((oldSelection - scrollOffset) * 2);
+      display->setCursor(0, oldRow);
+      display->print(" ");
+    }
     
-    // Draw new selection indicator
-    display->setCursor(2, 2 + (newSelection * 2));
-    display->print(">");
+    if (newSelection >= scrollOffset && newSelection < scrollOffset + visibleItems) {
+      uint8_t newRow = 2 + ((newSelection - scrollOffset) * 2);
+      display->setCursor(0, newRow);
+      display->print(">");
+    }
+  }
+  
+  /**
+   * Update menu items when scrolling (partial redraw without clearing screen)
+   * Draws center item first, then outer items based on scroll direction
+   */
+  void updateMenuItemsOnScroll() {
+    display->setFont(u8x8_font_8x13_1x2_f);
+    
+    uint8_t itemsToShow = min(visibleItems, itemCount);
+    
+    // Helper lambda to draw a menu item at a given visible position
+    auto drawMenuItem = [&](uint8_t visiblePos) {
+      uint8_t itemIndex = scrollOffset + visiblePos;
+      
+      if (itemIndex < itemCount) {
+        display->setCursor(0, 2 + (visiblePos * 2));  // Rows: 2, 4, 6
+        
+        // Show selection indicator
+        if (itemIndex == currentSelection) {
+          display->print(">");
+        } else {
+          display->print(" ");
+        }
+        display->print(menuItems[itemIndex]);
+        
+        // Clear rest of the line to remove any leftover characters
+        uint8_t textLen = strlen(menuItems[itemIndex]) + 1; // +1 for indicator
+        for (uint8_t j = textLen; j < 16; j++) {
+          display->print(" ");
+        }
+      }
+    };
+    
+    // Determine scroll direction based on selection position
+    bool scrollingDown = (currentSelection > lastSelection);
+    
+    // Draw center item first (position 1 of 0,1,2 for 3 visible items)
+    if (itemsToShow >= 2) {
+      drawMenuItem(1);  // Middle item
+    }
+    
+    // Draw outer items based on scroll direction
+    if (scrollingDown) {
+      // Scrolling down: draw bottom first, then top
+      if (itemsToShow >= 3) {
+        drawMenuItem(2);  // Bottom item
+      }
+      drawMenuItem(0);    // Top item
+    } else {
+      // Scrolling up: draw top first, then bottom
+      drawMenuItem(0);    // Top item
+      if (itemsToShow >= 3) {
+        drawMenuItem(2);  // Bottom item
+      }
+    }
   }
 
 public:
@@ -124,6 +222,8 @@ public:
    * @param u8x8Display Pointer to U8x8 display object
    * @param items Array of menu item strings
    * @param count Number of menu items
+   * @param menuTitle Menu title string
+   * @param visible Number of items to show at once (default 3)
    * @param pot Potentiometer analog pin
    * @param button Button digital pin
    * @param potEnable Potentiometer enable pin
@@ -131,19 +231,26 @@ public:
   MenuSystem(U8X8_SSD1306_128X64_NONAME_SW_I2C* u8x8Display,
              const char** items, 
              uint8_t count,
+             const char* menuTitle = "MENU",
+             uint8_t visible = 3,
              uint8_t pot = A7,
              uint8_t button = 5,
              uint8_t potEnable = 9)
     : display(u8x8Display),
       menuItems(items),
       itemCount(count),
+      visibleItems(visible),
+      title(menuTitle),
       potPin(pot),
       buttonPin(button),
       potEnablePin(potEnable),
       currentSelection(0),
       lastSelection(255),
+      scrollOffset(0),
+      lastScrollOffset(255),
       lastPotValue(-1),
       lastButtonState(false),
+      buttonJustPressed(false),
       needsRedraw(true),
       lastDebounceTime(0),
       lastButtonReading(false),
@@ -171,6 +278,7 @@ public:
   void update() {
     // Check if full redraw is needed
     if (needsRedraw) {
+      updateScrollOffset();
       drawFullMenu();
       lastSelection = currentSelection;
       return;
@@ -187,14 +295,25 @@ public:
     // Update display if selection changed
     if (newSelection != currentSelection) {
       uint8_t oldSelection = currentSelection;
+      uint8_t oldScrollOffset = scrollOffset;
+      
       currentSelection = newSelection;
-      updateSelectionIndicators(oldSelection, currentSelection);
+      updateScrollOffset();
+      
+      // Check if we need scroll update or just indicator update
+      if (scrollOffset != oldScrollOffset) {
+        // Scroll position changed - redraw menu items without clearing screen
+        updateMenuItemsOnScroll();
+      } else {
+        // Same scroll position - just update selection indicator
+        updateSelectionIndicators(oldSelection, currentSelection);
+      }
+      
       lastSelection = currentSelection;
     }
     
-    // Update button state for next cycle
-    bool buttonPressed = readButtonDebounced();
-    lastButtonState = buttonPressed;
+    // Update button state
+    buttonJustPressed = readButtonDebounced();
   }
   
   /**
@@ -226,10 +345,7 @@ public:
    * Returns: true if button was just pressed
    */
   bool isButtonJustPressed() {
-    bool buttonPressed = readButtonDebounced();
-    bool justPressed = buttonPressed && !lastButtonState;
-    lastButtonState = buttonPressed;
-    return justPressed;
+    return buttonJustPressed;
   }
   
   /**
