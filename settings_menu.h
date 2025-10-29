@@ -9,29 +9,18 @@
 #include <Arduino.h>
 #include "menu_system.h"
 
-// Settings menu items stored in PROGMEM
-const char settingsItem0[] PROGMEM = "PID";
-const char settingsItem1[] PROGMEM = "TEST";
-const char settingsItem2[] PROGMEM = "THRESH";
-const char settingsItem3[] PROGMEM = "PROFIL";
-const char settingsItem4[] PROGMEM = "MODE";
-const char settingsItem5[] PROGMEM = "SENSOR";
-const char settingsItem6[] PROGMEM = "DSPAUT";
-const char settingsItem7[] PROGMEM = "VWDATA";
-const char settingsItem8[] PROGMEM = "FACRST";
-const char settingsItem9[] PROGMEM = "BACK";
-
-const char* const settingsMenuItems[] PROGMEM = {
-  settingsItem0,
-  settingsItem1,
-  settingsItem2,
-  settingsItem3,
-  settingsItem4,
-  settingsItem5,
-  settingsItem6,
-  settingsItem7,
-  settingsItem8,
-  settingsItem9
+// Settings menu items
+const char* const settingsMenuItems[] = {
+  "PID",
+  "TEST",
+  "THRESH",
+  "PROFIL",
+  "MODE",
+  "SENSOR",
+  "DSPAUT",
+  "VWDATA",
+  "FACRST",
+  "BACK"
 };
 
 const uint8_t SETTINGS_ITEM_COUNT = 10;
@@ -39,8 +28,6 @@ const uint8_t SETTINGS_ITEM_COUNT = 10;
 class SettingsMenu {
 private:
   MenuSystem* menuSystem;
-  char itemBuffer[16];  // Buffer for loading strings from PROGMEM
-  const char* displayItems[10];  // Pointers to loaded strings
   
 public:
   /**
@@ -54,15 +41,8 @@ public:
                uint8_t pot = A7,
                uint8_t button = 5,
                uint8_t potEnable = 9) {
-    // Load menu items from PROGMEM into RAM
-    for (uint8_t i = 0; i < SETTINGS_ITEM_COUNT; i++) {
-      char* itemPtr = (char*)malloc(16);  // Allocate memory for each item
-      strcpy_P(itemPtr, (char*)pgm_read_word(&(settingsMenuItems[i])));
-      displayItems[i] = itemPtr;
-    }
-    
     // Create MenuSystem with 10 items, showing 3 at a time
-    menuSystem = new MenuSystem(u8x8Display, displayItems, SETTINGS_ITEM_COUNT, 
+    menuSystem = new MenuSystem(u8x8Display, settingsMenuItems, SETTINGS_ITEM_COUNT, 
                                  "CONFIG", 3, pot, button, potEnable);
   }
   
@@ -70,9 +50,6 @@ public:
    * Destructor - free allocated memory
    */
   ~SettingsMenu() {
-    for (uint8_t i = 0; i < SETTINGS_ITEM_COUNT; i++) {
-      free((void*)displayItems[i]);
-    }
     delete menuSystem;
   }
   

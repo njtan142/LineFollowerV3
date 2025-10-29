@@ -453,17 +453,7 @@ Main Menu (MAIN_MENU)
 - **Value editing**: `getSteps(20)` - fine control for precise adjustments
 - **Tests**: `getSteps(1000 / testModeCount)` - quick mode switching
 
----
 
-## Memory Optimizations
-
-All UI strings are stored in PROGMEM (Flash memory) to conserve RAM:
-- Menu item labels
-- Messages and prompts
-- Status indicators
-- Help text
-
-Strings are loaded into RAM only when needed for display using `strcpy_P()` function.
 
 ---
 

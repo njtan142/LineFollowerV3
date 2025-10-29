@@ -11,9 +11,6 @@
 
 class MenuSystem {
 private:
-  static constexpr unsigned long SCROLL_DEBOUNCE_MS = 500;
-  static constexpr unsigned long INDICATOR_DEBOUNCE_MS = 100;
-
   U8X8_SSD1306_128X64_NONAME_SW_I2C* display;
   
   // Input pins
@@ -33,39 +30,25 @@ private:
   uint8_t scrollOffset;
   uint8_t lastScrollOffset;
   int lastPotValue;
-  bool lastButtonState;
-  bool buttonJustPressed;
+  static bool buttonJustPressed;  // Static so it's shared across all MenuSystem instances
+  static bool potInitialized;  // Track if pot has been initialized for relative movement
   bool needsRedraw;
   
-  // Selection debouncing
-  uint8_t pendingSelection;
-  unsigned long selectionDebounceTime;
-  bool selectionStable;
-  
-  // Debounce timing
-  unsigned long lastDebounceTime;
-  bool lastButtonReading;
-  bool buttonState;
+  // Button debounce timing
+  static unsigned long lastDebounceTime;
+  static bool lastButtonReading;
+  static bool buttonState;
+  static bool lastButtonState;  // Track previous state to detect edges
   
   /**
-   * Read potentiometer with 80% deadzone applied
+   * Read potentiometer value
    * Returns: 0-1023 mapped value
    */
   int readPotClamped() {
     digitalWrite(potEnablePin, HIGH);
     delayMicroseconds(100);
     int raw = analogRead(potPin);
-    
-    // Use middle 80% of the range (102 to 921 maps to 0 to 1023)
-    const int DEADZONE = (1024 * 10) / 100;  // 10% on each side
-    const int MIN_VAL = DEADZONE;            // 102
-    const int MAX_VAL = 1024 - DEADZONE;     // 922
-    
-    // Clamp and remap
-    if (raw < MIN_VAL) raw = MIN_VAL;
-    if (raw > MAX_VAL) raw = MAX_VAL;
-    
-    return map(raw, MIN_VAL, MAX_VAL, 0, 1023);
+    return raw;
   }
   
   /**
@@ -259,16 +242,8 @@ public:
       lastSelection(255),
       scrollOffset(0),
       lastScrollOffset(255),
-      lastPotValue(-1),
-      lastButtonState(false),
-      buttonJustPressed(false),
       needsRedraw(true),
-      lastDebounceTime(0),
-      lastButtonReading(false),
-      buttonState(false),
-      pendingSelection(0),
-      selectionDebounceTime(0),
-      selectionStable(false) {
+      lastPotValue(-1) {
   }
   
   /**
@@ -281,6 +256,12 @@ public:
     pinMode(potEnablePin, OUTPUT);
     digitalWrite(potEnablePin, HIGH);
     
+    // Initialize button state to prevent false triggers on startup
+    lastButtonState = readButtonDebounced();
+    buttonJustPressed = false;
+    
+    // Reset pot initialization for relative movement
+    potInitialized = false;
     
     // Draw initial menu
     drawFullMenu();
@@ -296,57 +277,65 @@ public:
       updateScrollOffset();
       drawFullMenu();
       lastSelection = currentSelection;
+      // Initialize button state on redraw to prevent false triggers
+      lastButtonState = readButtonDebounced();
+      buttonJustPressed = false;
       return;
     }
     
-    // Map potentiometer directly to menu selection
+    // Read potentiometer value
     int potValue = readPotClamped();
     
-    // Map pot range (0-1023) to menu items (0 to itemCount-1)
-    // Invert so that high pot value = first item (index 0)
-    uint8_t newSelection = map(potValue, 0, 1023, itemCount - 1, 0);
-    newSelection = constrain(newSelection, 0, itemCount - 1);
-    
-    // Debounce the selection to prevent jitter at boundaries
-    // Use different debounce times: 500ms for scroll changes, 100ms for indicator-only changes
-    if (newSelection != pendingSelection) {
-      // Selection changed, reset debounce timer
-      pendingSelection = newSelection;
-      selectionDebounceTime = millis();
-      selectionStable = false;
-    } else {
-      // Selection is same as pending, check if it's been stable long enough
-      if (!selectionStable) {
-        // Calculate what the scroll offset would be for the pending selection
-        uint8_t pendingScrollOffset;
-        if (itemCount <= visibleItems) {
-          pendingScrollOffset = 0;
-        } else if (pendingSelection == 0) {
-          pendingScrollOffset = 0;
-        } else if (pendingSelection >= itemCount - 1) {
-          pendingScrollOffset = itemCount - visibleItems;
-        } else {
-          pendingScrollOffset = pendingSelection - 1;
-          if (pendingScrollOffset > itemCount - visibleItems) {
-            pendingScrollOffset = itemCount - visibleItems;
-          }
-        }
-        
-        // Determine required debounce time based on whether scroll would change
-        unsigned long requiredDebounce = (pendingScrollOffset != scrollOffset) ? SCROLL_DEBOUNCE_MS : INDICATOR_DEBOUNCE_MS;
-        
-        if ((millis() - selectionDebounceTime) >= requiredDebounce) {
-          selectionStable = true;
-        }
-      }
+    // Initialize pot value on first read (relative movement mode)
+    if (!potInitialized) {
+      lastPotValue = potValue;
+      potInitialized = true;
     }
     
-    // Only update the actual selection if it's been debounced
-    if (selectionStable && pendingSelection != currentSelection) {
+    // Calculate pot delta
+    int potDelta = potValue - lastPotValue;
+    
+    // Calculate dynamic threshold based on number of menu items
+    // Divide pot range (1024) by number of items to get movement per item
+    // Use 70% of that value as threshold to allow cycling through all items
+    const int MOVEMENT_THRESHOLD = max(5, (1024 * 7) / (itemCount * 10));
+    
+    DEBUG_PRINTLN("MOVEMENT_THRESHOLD: " + String(MOVEMENT_THRESHOLD) + ", Pot Delta: " + String(potDelta) + ", Last Pot: " + String(lastPotValue));
+    
+    // Determine if we should change selection based on pot movement
+    uint8_t newSelection = currentSelection;
+    
+    // Loop to handle multiple selection changes for fast pot movements
+    while (potDelta > MOVEMENT_THRESHOLD) {
+      // Pot moved up significantly - move selection down (higher pot = lower index)
+      if (newSelection > 0) {
+        newSelection--;
+      } else {
+        // Wrap around to last item (circular selection)
+        newSelection = itemCount - 1;
+      }
+      potDelta -= MOVEMENT_THRESHOLD;
+      lastPotValue += MOVEMENT_THRESHOLD;
+    }
+    
+    while (potDelta < -MOVEMENT_THRESHOLD) {
+      // Pot moved down significantly - move selection up (lower pot = higher index)
+      if (newSelection < itemCount - 1) {
+        newSelection++;
+      } else {
+        // Wrap around to first item (circular selection)
+        newSelection = 0;
+      }
+      potDelta += MOVEMENT_THRESHOLD;
+      lastPotValue -= MOVEMENT_THRESHOLD;
+    }
+    
+    // Apply selection change immediately (no debounce needed since pot delta resets)
+    if (newSelection != currentSelection) {
       uint8_t oldSelection = currentSelection;
       uint8_t oldScrollOffset = scrollOffset;
       
-      currentSelection = pendingSelection;
+      currentSelection = newSelection;
       updateScrollOffset();
       
       // Check if we need scroll update or just indicator update
@@ -361,8 +350,10 @@ public:
       lastSelection = currentSelection;
     }
     
-    // Update button state
-    buttonJustPressed = readButtonDebounced();
+    // Update button state - detect rising edge (button just pressed)
+    bool currentButtonState = readButtonDebounced();
+    buttonJustPressed = (currentButtonState && !lastButtonState);  // Rising edge detection
+    lastButtonState = currentButtonState;
   }
   
   /**
@@ -398,10 +389,23 @@ public:
   }
   
   /**
-   * Force a full redraw on next update
+   * Force a full redraw on next update.
+   * @param resetSelection If true, resets selection to first item (default: false).
+   * Note: Resetting selection may be unexpected for users; make this configurable.
    */
-  void requestRedraw() {
+  void requestRedraw(bool resetSelection = false) {
     needsRedraw = true;
+    // Reset button state to prevent immediate re-trigger when switching menus
+    buttonJustPressed = false;
+    lastButtonState = readButtonDebounced();  // Initialize lastButtonState to current state
+    // Reset pot initialization to enable relative movement from current position
+    potInitialized = false;
+    if (resetSelection) {
+      // Reset selection to first item when re-entering menu
+      currentSelection = 0;
+      lastSelection = 0;
+      scrollOffset = 0;
+    }
   }
   
   /**
@@ -412,5 +416,13 @@ public:
     return readPotClamped();
   }
 };
+
+// Static member definitions
+bool MenuSystem::buttonJustPressed = false;
+bool MenuSystem::potInitialized = false;
+unsigned long MenuSystem::lastDebounceTime = 0;
+bool MenuSystem::lastButtonReading = false;
+bool MenuSystem::buttonState = false;
+bool MenuSystem::lastButtonState = false;
 
 #endif // MENU_SYSTEM_H
