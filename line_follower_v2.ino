@@ -7,7 +7,7 @@
  */
 
 // Debug configuration - set to 0 to disable serial debug output
-#define DEBUG_SERIAL 1
+#define DEBUG_SERIAL 0
 
 #if DEBUG_SERIAL
   #define DEBUG_BEGIN(baud) Serial.begin(baud)
