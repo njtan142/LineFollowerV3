@@ -7,7 +7,7 @@
  */
 
 // Debug configuration - set to 0 to disable serial debug output
-#define DEBUG_SERIAL 0
+#define DEBUG_SERIAL 1
 
 #if DEBUG_SERIAL
   #define DEBUG_BEGIN(baud) Serial.begin(baud)
@@ -23,6 +23,12 @@
 #include "menu_system.h"
 #include "settings_menu.h"
 #include "pid_edit.h"
+#include "line_sensor.h"
+#include "motor.h"
+#include "Settings.h"
+#include "eeprom_manager.h"
+#include "hal.h"
+#include "timer.h"
 
 // Display Pins (Software I2C for SSD1306 OLED)
 #define SOFT_SDA 2
@@ -35,6 +41,19 @@
 
 // Create display object - U8x8 is text-only mode (16x8 characters)
 U8X8_SSD1306_128X64_NONAME_SW_I2C u8x8(SOFT_SCL, SOFT_SDA, U8X8_PIN_NONE);
+
+// Settings object
+Settings settings;
+
+// Sensor object
+LineSensor lineSensor;
+
+// Motor objects (will be initialized in setup)
+Motor* leftMotor = nullptr;
+Motor* rightMotor = nullptr;
+
+// Timer for deltaTime calculation
+Timer deltaTimer;
 
 // UI State
 enum UIState {
@@ -68,9 +87,30 @@ void setup() {
   delay(100);
   DEBUG_PRINTLN("Line Follower - Main Menu");
   
+  // Load settings from EEPROM
+  settings.load();
+  
   // Initialize display
   u8x8.begin();
   u8x8.setPowerSave(0);
+  
+  // Initialize motors using HAL pin definitions
+  leftMotor = new Motor(
+    HAL::MotorPins::Left::IN1, 
+    HAL::MotorPins::Left::IN2, 
+    HAL::MotorPins::Left::PWM, 
+    HAL::MotorPins::STBY, 
+    settings.alignmentOffset, 
+    &settings
+  );
+  rightMotor = new Motor(
+    HAL::MotorPins::Right::IN1, 
+    HAL::MotorPins::Right::IN2, 
+    HAL::MotorPins::Right::PWM, 
+    HAL::MotorPins::STBY, 
+    0, 
+    &settings
+  );
   
   // Initialize only the main menu (settings menu will be initialized when needed)
   mainMenu.begin();
@@ -125,7 +165,7 @@ void handleMainMenu() {
         break;
       case 1:  // CALIBRT
         DEBUG_PRINTLN("-> Starting Calibration");
-        // TODO: Implement calibration
+        performCalibration();
         break;
       case 2:  // RUN
         DEBUG_PRINTLN("-> Starting Run Mode");
@@ -227,4 +267,87 @@ void handlePIDEdit() {
     delay(100);  // Short delay to ensure button is released
     settingsMenu.update();  // Clear any pending button state
   }
+}
+
+void performCalibration() {
+  DEBUG_PRINTLN("Starting sensor calibration...");
+  
+  // Clear display and show calibration message
+  u8x8.clear();
+  u8x8.setCursor(0, 0);
+  u8x8.print("CALIBRATING");
+  u8x8.setCursor(0, 2);
+  u8x8.print("Sweeping...");
+  
+  // Initialize calibration
+  lineSensor.beginCalibration();
+  
+  // Calibration sweep - oscillate left and right
+  const int sweepSpeed = 150;  // Medium speed for calibration
+  const int sweepTime = 200;   // Time per sweep direction
+  const int totalSweeps = 10;  // Number of complete sweeps
+  
+  Timer sweepTimer;
+  
+  for (int i = 0; i < totalSweeps; i++) {
+    // Sweep right
+    leftMotor->setState(MotorState::FORWARD);
+    leftMotor->setSpeed(sweepSpeed);
+    rightMotor->setState(MotorState::BACKWARD);
+    rightMotor->setSpeed(sweepSpeed);
+    
+    sweepTimer.start();
+    deltaTimer.start();
+    while (sweepTimer.elapsed() < sweepTime) {
+      unsigned long deltaTime = deltaTimer.elapsed();
+      deltaTimer.start();
+      
+      leftMotor->update(deltaTime);
+      rightMotor->update(deltaTime);
+      lineSensor.updateCalibration();
+      delay(10);
+    }
+    
+    // Sweep left
+    leftMotor->setState(MotorState::BACKWARD);
+    leftMotor->setSpeed(sweepSpeed);
+    rightMotor->setState(MotorState::FORWARD);
+    rightMotor->setSpeed(sweepSpeed);
+    
+    sweepTimer.start();
+    deltaTimer.start();
+    while (sweepTimer.elapsed() < sweepTime) {
+      unsigned long deltaTime = deltaTimer.elapsed();
+      deltaTimer.start();
+      
+      leftMotor->update(deltaTime);
+      rightMotor->update(deltaTime);
+      lineSensor.updateCalibration();
+      delay(10);
+    }
+    
+    // Update progress on display
+    u8x8.setCursor(0, 4);
+    u8x8.print("Progress: ");
+    u8x8.print((i + 1) * 10);
+    u8x8.print("%  ");
+  }
+  
+  // Stop motors
+  leftMotor->brake();
+  rightMotor->brake();
+  
+  // Finalize calibration
+  lineSensor.endCalibration();
+  
+  // Show completion message
+  u8x8.setCursor(0, 6);
+  u8x8.print("COMPLETE!");
+  delay(1500);
+  
+  // Return to main menu
+  u8x8.clear();
+  mainMenu.requestRedraw();
+  
+  DEBUG_PRINTLN("Calibration complete");
 }
