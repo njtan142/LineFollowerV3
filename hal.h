@@ -15,14 +15,14 @@ public:
         static const uint8_t STBY = 7;
         
         struct Left {
-            static const uint8_t IN1 = 8;
-            static const uint8_t IN2 = 12;
+            static const uint8_t IN1 = 12;
+            static const uint8_t IN2 = 8;
             static const uint8_t PWM = 6;  // Must be PWM-capable pin
         };
         
         struct Right {
-            static const uint8_t IN1 = 11;  // Changed from 13 to avoid built-in LED
-            static const uint8_t IN2 = 4;
+            static const uint8_t IN1 = 4;  // Changed from 13 to avoid built-in LED
+            static const uint8_t IN2 = 11;
             static const uint8_t PWM = 10;  // Must be PWM-capable pin
         };
     };
