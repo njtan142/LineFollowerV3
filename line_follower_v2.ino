@@ -40,6 +40,7 @@
 #include "menu_system.h"
 #include "settings_menu.h"
 #include "pid_edit.h"
+#include "pid_controller.h"
 #include "line_sensor.h"
 #include "motor.h"
 #include "Settings.h"
@@ -219,7 +220,7 @@ void handleMainMenu() {
         break;
       case 2:  // RUN
         DEBUG_PRINTLN("-> Starting Run Mode");
-        // TODO: Implement run mode
+        performLineFollowing();
         break;
     }
   }
@@ -404,8 +405,8 @@ void performCalibration() {
   
   // Calibration parameters
   const int sweepSpeed = 150;  // Medium speed for smooth, controlled sweeps
-  const int sweepTime = 200;   // Time to sweep in each direction (milliseconds)
-  const int totalSweeps = 10;  // Number of complete left-right-left sweeps
+  const int sweepTime = 20;   // Time to sweep in each direction (milliseconds)
+  const int totalSweeps = 100;  // Number of complete left-right-left sweeps
   
   Timer sweepTimer;
   
@@ -481,4 +482,150 @@ void performCalibration() {
   mainMenu.requestRedraw();
   
   DEBUG_PRINTLN("Calibration complete");
+}
+
+/**
+ * Line Following Mode
+ * 
+ * Implements closed-loop PID control for following a line.
+ * Continuously reads line position from sensors and adjusts motor speeds
+ * to keep the robot centered on the line.
+ * 
+ * Process:
+ * 1. Initialize PID controller with saved parameters
+ * 2. Display run mode status
+ * 3. Enter control loop:
+ *    - Read line position from sensors
+ *    - Calculate PID correction
+ *    - Apply correction to differential motor speeds
+ *    - Update display with current position
+ * 4. Exit on button press
+ * 
+ * The robot uses differential steering: when line shifts left, right motor
+ * speeds up and left motor slows down (and vice versa) to turn toward line.
+ * TODOS: Display time after line following run
+ */
+void performLineFollowing() {
+  DEBUG_PRINTLN("Starting line following mode...");
+  
+  // Display run mode start message
+  u8x8.clear();
+  u8x8.setCursor(0, 0);
+  u8x8.print("LINE FOLLOW");
+  u8x8.setCursor(0, 1);
+  u8x8.print("Press to stop");
+  u8x8.setCursor(0, 3);
+  u8x8.print("Starting...");
+  
+  // Give user time to read the message
+  delay(1000);
+  
+  // Turn off display to reduce power consumption and I2C overhead
+  u8x8.setPowerSave(1);
+  
+  // Initialize PID controller with settings from EEPROM
+  // PID values are stored as integers, convert to float using scale factor
+  float kp = (float)settings.kp / settings.pidScale;
+  float ki = (float)settings.ki / settings.pidScale;
+  float kd = (float)settings.kd / settings.pidScale;
+  
+  PIDController pid(kp, ki, kd);
+  pid.setMaxOutput(255.0);  // Maximum speed correction
+  pid.setMaxIntegral(1000.0);  // Prevent integral windup
+  
+  DEBUG_PRINT("PID Gains - Kp: ");
+  DEBUG_PRINT(kp);
+  DEBUG_PRINT(" Ki: ");
+  DEBUG_PRINT(ki);
+  DEBUG_PRINT(" Kd: ");
+  DEBUG_PRINTLN(kd);
+  
+  // Initialize motors to forward state
+  leftMotor->setState(MotorState::FORWARD);
+  rightMotor->setState(MotorState::FORWARD);
+  
+  // Initialize timers
+  deltaTimer.start();
+  
+  // Setup button for exit detection
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  bool lastButtonState = digitalRead(BUTTON_PIN);
+  
+  // Main control loop - runs until button is pressed
+  while (true) {
+    // Check for button press to exit
+    bool currentButtonState = digitalRead(BUTTON_PIN);
+    if (lastButtonState == HIGH && currentButtonState == LOW) {
+      DEBUG_PRINTLN("Button pressed - exiting line following");
+      break;
+    }
+    lastButtonState = currentButtonState;
+    
+    // Calculate time since last update
+    unsigned long deltaTime = deltaTimer.elapsed();
+    deltaTimer.start();
+    
+    // Read current line position from sensors
+    // Position ranges from -3500 (left) to +3500 (right), 0 = centered
+    lineSensor.readSensors();
+    int linePosition = lineSensor.getPosition();
+    
+    // Calculate PID correction
+    // Setpoint is 0 (line centered under robot)
+    // Negative correction = line is left, need to turn left (slow left motor)
+    // Positive correction = line is right, need to turn right (slow right motor)
+    float correction = pid.compute(0, linePosition);
+    
+    // Apply correction to motor speeds using differential steering
+    // Base speed is the target forward speed from settings
+    int leftSpeed = settings.baseSpeed - correction;
+    int rightSpeed = settings.baseSpeed + correction;
+    
+    // Clamp speeds to valid range (0-255)
+    // Negative speeds would reverse motor, which we don't want in normal following
+    if (leftSpeed < 0) leftSpeed = 0;
+    if (leftSpeed > 255) leftSpeed = 255;
+    if (rightSpeed < 0) rightSpeed = 0;
+    if (rightSpeed > 255) rightSpeed = 255;
+    
+    // Set motor speeds
+    leftMotor->setSpeed(leftSpeed);
+    rightMotor->setSpeed(rightSpeed);
+    
+    // Update motors (handles smooth ramping)
+    leftMotor->update(deltaTime);
+    rightMotor->update(deltaTime);
+    
+    // Debug output for monitoring (only when DEBUG_SERIAL is enabled)
+    DEBUG_PRINT("Pos: ");
+    DEBUG_PRINT(linePosition);
+    DEBUG_PRINT(" | Corr: ");
+    DEBUG_PRINT(correction);
+    DEBUG_PRINT(" | L: ");
+    DEBUG_PRINT(leftSpeed);
+    DEBUG_PRINT(" R: ");
+    DEBUG_PRINTLN(rightSpeed);
+    
+    // Small delay for system stability
+    delay(10);
+  }
+  
+  // Stop motors when exiting
+  leftMotor->brake();
+  rightMotor->brake();
+  
+  // Turn display back on
+  u8x8.setPowerSave(0);
+  
+  // Show exit message
+  u8x8.clear();
+  u8x8.setCursor(0, 3);
+  u8x8.print("STOPPED");
+  delay(1000);
+  
+  // Return to main menu
+  u8x8.clear();
+  mainMenu.requestRedraw();
+  
+  DEBUG_PRINTLN("Line following complete");
 }
