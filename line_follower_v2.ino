@@ -623,7 +623,7 @@ void performLineFollowing()
     leftMotor->update();
     rightMotor->update();
 
-    delay(50);
+    delay(30);
     leftMotor->brake();
     rightMotor->brake();
 
@@ -631,21 +631,15 @@ void performLineFollowing()
 
     // u8x8.setPowerSave(0);  // Turn on display temporarily
     u8x8.setCursor(0, 0);
-    u8x8.print("POS:");
     u8x8.print(linePosition);
-    u8x8.print("    "); // Clear remaining characters
 
     u8x8.setCursor(0, 2);
-    u8x8.print("BLACK:");
     u8x8.print(blackCount);
-    u8x8.print("    ");
 
     u8x8.setCursor(0, 4);
-    u8x8.print("L:");
     u8x8.print(leftSpeed);
-    u8x8.print(" R:");
+    u8x8.print(" <-> ");
     u8x8.print(rightSpeed);
-    u8x8.print("    ");
 
     // Debug output for monitoring (only when DEBUG_SERIAL is enabled)
     DEBUG_PRINT("POS: ");
@@ -659,7 +653,7 @@ void performLineFollowing()
     DEBUG_PRINT(" R: ");
     DEBUG_PRINTLN(rightSpeed);
 
-    delay(1000);
+    delay(750);
   }
 
   // Stop motors when exiting
