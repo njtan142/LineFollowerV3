@@ -54,21 +54,22 @@ void LineSensor::readSensorsRaw(){
         }
     } 
     // MODIFIED MODE: 6 physical sensors + 2 calculated virtual sensors
-    // This compensates for hardware with only 6 sensors while maintaining
-    // 8-channel position calculation algorithm
+    // Hardware mapping: s1→A0, s3→A1, s4→A2, s5→A3, s6→A4, s8→A5
+    // Physical layout: s1(leftmost), s3, s4, s5, s6, s8(rightmost)
+    // Array positions: 0(actual), 1(virtual), 2-5(actual), 6(virtual), 7(actual)
     else {
-        // Read 6 physical sensors from A1-A6 into non-consecutive array positions
-        sensorValues[0] = analogRead(A1);  // Leftmost sensor
-        sensorValues[2] = analogRead(A2);
-        sensorValues[3] = analogRead(A3);  // Center-left
-        sensorValues[4] = analogRead(A4);  // Center-right
-        sensorValues[5] = analogRead(A5);
-        sensorValues[7] = analogRead(A6);  // Rightmost sensor
+        // Read 6 physical sensors from A0-A5 into specific array positions
+        sensorValues[0] = analogRead(A0);  // s1 - leftmost actual sensor
+        sensorValues[2] = analogRead(A1);  // s3 - position 2
+        sensorValues[3] = analogRead(A2);  // s4 - position 3 (center-left)
+        sensorValues[4] = analogRead(A3);  // s5 - position 4 (center-right)
+        sensorValues[5] = analogRead(A4);  // s6 - position 5
+        sensorValues[7] = analogRead(A5);  // s8 - rightmost actual sensor
         
         // Create virtual sensors by averaging adjacent physical sensors
         // This provides smoother transitions and better position interpolation
-        sensorValues[1] = (sensorValues[0] + sensorValues[2]) / 2;  // Virtual left
-        sensorValues[6] = (sensorValues[5] + sensorValues[7]) / 2;  // Virtual right
+        sensorValues[1] = (sensorValues[0] + sensorValues[2]) / 2;  // 2nd leftmost (virtual between s1 and s3)
+        sensorValues[6] = (sensorValues[5] + sensorValues[7]) / 2;  // 2nd rightmost (virtual between s6 and s8)
     }
 }
 
@@ -175,10 +176,10 @@ void LineSensor::readSensors(){
 int LineSensor::getPosition(){
     // Validate calibration before attempting position calculation
     // Invalid calibration could cause division by zero or incorrect thresholds
-    if (!validateCalibration()) {
-        lastPosition = 0;  // Return center as safe default
-        return lastPosition;
-    }
+    // if (!validateCalibration()) {
+    //     lastPosition = 0;  // Return center as safe default
+    //     return lastPosition;
+    // }
     
     // Calculate weighted average of sensors detecting the line
     long weighted = 0;

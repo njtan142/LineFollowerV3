@@ -60,11 +60,10 @@ class Motor {
         void setState(MotorState state);
         
         /**
-         * Updates motor speed based on current state and elapsed time
-         * Must be called regularly in loop for smooth ramping
-         * @param deltaTime - Milliseconds since last update
+         * Updates motor speed based on current speed
+         * Must be called regularly in loop
          */
-        void update(unsigned long deltaTime);
+        void update();
         
         /**
          * Checks if motor is currently moving
