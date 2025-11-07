@@ -140,7 +140,7 @@ void setup() {
     HAL::MotorPins::Left::IN2, 
     HAL::MotorPins::Left::PWM, 
     HAL::MotorPins::STBY, 
-    settings.alignmentOffset,  // Compensation for left motor
+    0,  // Compensation for left motor
     &settings
   );
   
@@ -375,20 +375,148 @@ void handlePIDEdit() {
 }
 
 /**
+ * Calibration Helper - Perform rotational sweeps
+ * 
+ * Rotates the robot in place in a specified direction while reading sensors.
+ * 
+ * @param clockwise True for clockwise rotation, false for counter-clockwise
+ * @param sweepCount Number of sweep iterations to perform
+ * @param sweepSpeed Motor speed (0-255)
+ * @param sweepTime Duration of each sweep in milliseconds
+ * @param label Display label for progress (e.g., "CW" or "CCW")
+ */
+void calibrateRotationalSweeps(bool clockwise, int sweepCount, int sweepSpeed, int sweepTime, const char* label) {
+  Timer sweepTimer;
+  
+  for (int i = 0; i < sweepCount; i++) {
+    // Set motor directions based on rotation direction
+    if (clockwise) {
+      leftMotor->setState(MotorState::FORWARD);
+      rightMotor->setState(MotorState::BACKWARD);
+    } else {
+      leftMotor->setState(MotorState::BACKWARD);
+      rightMotor->setState(MotorState::FORWARD);
+    }
+    
+    // Set speeds (same for both motors for in-place rotation)
+    leftMotor->setSpeed(sweepSpeed);
+    rightMotor->setSpeed(sweepSpeed);
+    
+    // Execute sweep for specified time
+    sweepTimer.start();
+    deltaTimer.start();
+    while (sweepTimer.elapsed() < sweepTime) {
+      unsigned long deltaTime = deltaTimer.elapsed();
+      deltaTimer.start();
+      
+      rightMotor->update(deltaTime);
+      leftMotor->update(deltaTime);
+      lineSensor.updateCalibration();
+      
+      delay(10);
+    }
+    
+    // Update progress indicator
+    int progress = ((i + 1) * 50) / sweepCount;
+    u8x8.setCursor(0, 4);
+    u8x8.print(label);
+    u8x8.print(": ");
+    u8x8.print(progress);
+    u8x8.print("%  ");
+  }
+}
+
+/**
+ * Calibration Helper - Perform linear motion
+ * 
+ * Moves the robot forward or backward while reading sensors.
+ * 
+ * @param forward True for forward motion, false for backward
+ * @param cycleCount Number of movement iterations to perform
+ * @param speed Motor speed (0-255)
+ * @param moveTime Duration of each movement in milliseconds
+ * @param label Display label for progress (e.g., "Fwd" or "Bwd")
+ */
+void calibrateLinearMotion(bool forward, int cycleCount, int speed, int moveTime, const char* label) {
+  Timer moveTimer;
+  
+  for (int i = 0; i < cycleCount; i++) {
+    // Set motor directions and speeds
+    MotorState state = forward ? MotorState::FORWARD : MotorState::BACKWARD;
+    leftMotor->setState(state);
+    leftMotor->setSpeed(speed);
+    rightMotor->setState(state);
+    rightMotor->setSpeed(speed);
+    
+    // Execute movement for specified time
+    moveTimer.start();
+    deltaTimer.start();
+    while (moveTimer.elapsed() < moveTime) {
+      unsigned long deltaTime = deltaTimer.elapsed();
+      deltaTimer.start();
+      
+      rightMotor->update(deltaTime);
+      leftMotor->update(deltaTime);
+      lineSensor.updateCalibration();
+      
+      delay(10);
+    }
+    
+    // Update progress indicator
+    int progress = ((i + 1) * 100) / cycleCount;
+    u8x8.setCursor(0, 4);
+    u8x8.print(label);
+    u8x8.print(": ");
+    u8x8.print(progress);
+    u8x8.print("%   ");
+  }
+}
+
+/**
+ * Calibration Helper - Display sensor results
+ * 
+ * Shows the calibrated min/max values for all 8 sensors in two phases.
+ */
+void displayCalibrationResults() {
+  const int* sensorMin = lineSensor.getSensorMin();
+  const int* sensorMax = lineSensor.getSensorMax();
+  
+  // Display first 4 sensors (0-3)
+  u8x8.clear();
+  for (int i = 0; i < 4; i++) {
+    u8x8.setCursor(0, i * 2);
+    u8x8.print("S");
+    u8x8.print(i);
+    u8x8.print(":");
+    u8x8.print(sensorMin[i]);
+    u8x8.print("-");
+    u8x8.print(sensorMax[i]);
+  }
+  delay(5000);
+  
+  // Display last 4 sensors (4-7)
+  u8x8.clear();
+  for (int i = 4; i < 8; i++) {
+    u8x8.setCursor(0, (i - 4) * 2);
+    u8x8.print("S");
+    u8x8.print(i);
+    u8x8.print(":");
+    u8x8.print(sensorMin[i]);
+    u8x8.print("-");
+    u8x8.print(sensorMax[i]);
+  }
+  delay(5000);
+}
+
+/**
  * Sensor Calibration Routine
  * 
- * Performs automatic line sensor calibration by sweeping the robot
- * left and right over the line. This allows sensors to learn the
- * difference between the line (dark) and background (light).
+ * Performs automatic line sensor calibration by rotating the robot
+ * clockwise for 2 seconds while continuously reading sensor values.
+ * This allows sensors to learn the difference between the line (dark) 
+ * and background (light).
  * 
- * Process:
- * 1. Initialize calibration (reset min/max values)
- * 2. Sweep robot left and right repeatedly (10 complete sweeps)
- * 3. Continuously read sensors during movement to capture min/max values
- * 4. Calculate and save threshold values to EEPROM
- * 
- * Visual feedback is provided on the display showing sweep progress.
- * Motors use smooth acceleration for gentler calibration movement.
+ * Visual feedback is provided on the display showing progress.
  */
 void performCalibration() {
   DEBUG_PRINTLN("Starting sensor calibration...");
@@ -398,145 +526,58 @@ void performCalibration() {
   u8x8.setCursor(0, 0);
   u8x8.print("CALIBRATING");
   u8x8.setCursor(0, 2);
-  u8x8.print("Sweeping...");
+  u8x8.print("Rotating...");
   
   // Initialize calibration (reset sensor min/max tracking)
   lineSensor.beginCalibration();
   
   // Calibration parameters
-  const int sweepSpeed = 255;  // Medium speed for smooth, controlled sweeps
-  const int sweepTime = 50;   // Time to sweep in each direction (milliseconds)
-  const int totalSweeps = 40;  // Number of complete left-right-left sweeps
+  const int calibrationSpeed = 100;  // Motor speed during calibration
+  const unsigned long calibrationTime = 10000;  // 10 seconds
   
-  Timer sweepTimer;
+  // Set motors for clockwise rotation
+  leftMotor->setState(MotorState::BACKWARD);
+  leftMotor->setSpeed(calibrationSpeed);
+  rightMotor->setState(MotorState::FORWARD);
+  rightMotor->setSpeed(calibrationSpeed);
   
-  // Perform calibration sweeps
-  for (int i = 0; i < totalSweeps; i++) {
-    // SWEEP RIGHT: Turn right by spinning motors in opposite directions
-    leftMotor->setState(MotorState::FORWARD);
-    leftMotor->setSpeed(sweepSpeed);
-    rightMotor->setState(MotorState::BACKWARD);
-    rightMotor->setSpeed(sweepSpeed);
-    
-    // Execute right sweep for specified time
-    sweepTimer.start();
+  // Run calibration for 2 seconds
+  Timer calibTimer;
+  calibTimer.start();
+  deltaTimer.start();
+  int readings = 0;
+  
+  
+  while (calibTimer.elapsed() < calibrationTime) {
+    readings++;
+    unsigned long deltaTime = deltaTimer.elapsed();
+    // Update motors
+    leftMotor->update(deltaTime);
+    rightMotor->update(deltaTime);
     deltaTimer.start();
-    while (sweepTimer.elapsed() < sweepTime) {
-      // Calculate time since last update for smooth motor ramping
-      unsigned long deltaTime = deltaTimer.elapsed();
-      deltaTimer.start();
-      
-      // Update motor speeds (handles acceleration ramping)
-      leftMotor->update(deltaTime);
-      rightMotor->update(deltaTime);
-      
-      // Read and record sensor values
-      lineSensor.updateCalibration();
-      
-      delay(10);  // Small delay between readings
-    }
+
     
-    // SWEEP LEFT: Turn left by reversing motor directions
-    leftMotor->setState(MotorState::BACKWARD);
-    leftMotor->setSpeed(sweepSpeed);
-    rightMotor->setState(MotorState::FORWARD);
-    rightMotor->setSpeed(sweepSpeed);
-    
-    // Execute left sweep for specified time
-    sweepTimer.start();
-    deltaTimer.start();
-    while (sweepTimer.elapsed() < sweepTime) {
-      // Calculate time since last update
-      unsigned long deltaTime = deltaTimer.elapsed();
-      deltaTimer.start();
-      
-      // Update motors and sensors
-      leftMotor->update(deltaTime);
-      rightMotor->update(deltaTime);
-      lineSensor.updateCalibration();
-      
-      delay(10);
-    }
-    
-    // Update progress indicator on display (10%, 20%, 30%, etc.)
-    u8x8.setCursor(0, 4);
-    u8x8.print("Progress: ");
-    u8x8.print((i + 1) * 10);
-    u8x8.print("%  ");
+    // Read and record sensor values
+    lineSensor.updateCalibration();
   }
+
+  u8x8.setCursor(0, 4);
+  u8x8.print("Readings: ");
+  u8x8.print(readings);
   
-  // Stop motors immediately (use brake, not coast)
+  // Stop motors and finalize calibration
   leftMotor->brake();
   rightMotor->brake();
-  
-  // Finalize calibration (calculate thresholds and save to EEPROM)
   lineSensor.endCalibration();
+  
   
   // Show completion message
   u8x8.setCursor(0, 6);
   u8x8.print("COMPLETE!");
-  delay(1500);  // Display completion message for 1.5 seconds
+  delay(1500);
   
-  // Display calibration results - min and max values for all sensors
-  // Get pointers to calibration data
-  const int* sensorMin = lineSensor.getSensorMin();
-  const int* sensorMax = lineSensor.getSensorMax();
-  
-  // Phase 1: Display first 4 sensors (0-3) for 5 seconds
-  u8x8.clear();
-  u8x8.setCursor(0, 0);
-  u8x8.print("S0:");
-  u8x8.print(sensorMin[0]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[0]);
-  
-  u8x8.setCursor(0, 2);
-  u8x8.print("S1:");
-  u8x8.print(sensorMin[1]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[1]);
-  
-  u8x8.setCursor(0, 4);
-  u8x8.print("S2:");
-  u8x8.print(sensorMin[2]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[2]);
-  
-  u8x8.setCursor(0, 6);
-  u8x8.print("S3:");
-  u8x8.print(sensorMin[3]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[3]);
-  
-  delay(5000);  // Show first 4 sensors for 5 seconds
-  
-  // Phase 2: Display last 4 sensors (4-7) for 5 seconds
-  u8x8.clear();
-  u8x8.setCursor(0, 0);
-  u8x8.print("S4:");
-  u8x8.print(sensorMin[4]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[4]);
-  
-  u8x8.setCursor(0, 2);
-  u8x8.print("S5:");
-  u8x8.print(sensorMin[5]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[5]);
-  
-  u8x8.setCursor(0, 4);
-  u8x8.print("S6:");
-  u8x8.print(sensorMin[6]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[6]);
-  
-  u8x8.setCursor(0, 6);
-  u8x8.print("S7:");
-  u8x8.print(sensorMin[7]);
-  u8x8.print("-");
-  u8x8.print(sensorMax[7]);
-  
-  delay(5000);  // Show last 4 sensors for 5 seconds
+  // Display calibration results
+  displayCalibrationResults();
   
   // Return to main menu
   u8x8.clear();

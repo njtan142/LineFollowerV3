@@ -14,16 +14,17 @@ public:
     struct MotorPins {
         static const uint8_t STBY = 7;
         
+        // Temporarily swap just the PWM pins
         struct Left {
-            static const uint8_t IN1 = 12;
-            static const uint8_t IN2 = 8;
-            static const uint8_t PWM = 6;  // Must be PWM-capable pin
+            static const uint8_t IN1 = 8;
+            static const uint8_t IN2 = 12;
+            static const uint8_t PWM = 10;  // Using right's PWM
         };
         
         struct Right {
             static const uint8_t IN1 = 4;  // Changed from 13 to avoid built-in LED
             static const uint8_t IN2 = 11;
-            static const uint8_t PWM = 10;  // Must be PWM-capable pin
+            static const uint8_t PWM = 6;   // Using left's PWM
         };
     };
     

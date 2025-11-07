@@ -63,12 +63,12 @@
 // Left Motor Pins
 #define LEFT_IN1 8
 #define LEFT_IN2 12
-#define LEFT_PWM 6
+#define LEFT_PWM 10
 
 // Right Motor Pins
-#define RIGHT_IN1 11  // Changed from 13 to avoid built-in LED
-#define RIGHT_IN2 4
-#define RIGHT_PWM 10
+#define RIGHT_IN1 4  // Changed from 13 to avoid built-in LED
+#define RIGHT_IN2 11
+#define RIGHT_PWM 6
 
 #if USE_OLED
   // Create display object (128x32 = 4 lines at rows 0, 2, 4, 6)
@@ -352,8 +352,8 @@ void testBothForward() {
   strcpy_P(buf, STR_SPEED); strcat(buf, ": 200");
   printToDisplay(4, buf);
   printToDisplayP(6, STR_RUNNING);
-  setMotorState(true, FORWARD, 200);   // Left motor
-  setMotorState(false, FORWARD, 200);  // Right motor
+  setMotorState(true, FORWARD, 100);   // Left motor
+  setMotorState(false, FORWARD, 100);  // Right motor
   delay(2000);
   
   setMotorState(true, COAST, 0);
@@ -370,8 +370,8 @@ void testBothBackward() {
   strcpy_P(buf, STR_SPEED); strcat(buf, ": 200");
   printToDisplay(4, buf);
   printToDisplayP(6, STR_RUNNING);
-  setMotorState(true, BACKWARD, 200);   // Left motor
-  setMotorState(false, BACKWARD, 200);  // Right motor
+  setMotorState(true, BACKWARD, 100);   // Left motor
+  setMotorState(false, BACKWARD, 100);  // Right motor
   delay(2000);
   
   setMotorState(true, COAST, 0);
@@ -388,13 +388,13 @@ void testLeftOnly() {
   strcpy(buf, "FWD "); strcat_P(buf, STR_SPEED); strcat(buf, ": 180");
   printToDisplay(4, buf);
   printToDisplayP(6, STR_RUNNING);
-  setMotorState(true, FORWARD, 180);
+  setMotorState(true, FORWARD, 100);
   delay(1500);
   
   DEBUG_PRINTLN("Running LEFT motor only - Backward at speed 180 for 1.5 seconds");
   strcpy(buf, "BWD "); strcat_P(buf, STR_SPEED); strcat(buf, ": 180");
   printToDisplay(4, buf);
-  setMotorState(true, BACKWARD, 180);
+  setMotorState(true, BACKWARD, 100);
   delay(1500);
   
   setMotorState(true, COAST, 0);
@@ -410,13 +410,13 @@ void testRightOnly() {
   strcpy(buf, "FWD "); strcat_P(buf, STR_SPEED); strcat(buf, ": 180");
   printToDisplay(4, buf);
   printToDisplayP(6, STR_RUNNING);
-  setMotorState(false, FORWARD, 180);
+  setMotorState(false, FORWARD, 100);
   delay(1500);
   
   DEBUG_PRINTLN("Running RIGHT motor only - Backward at speed 180 for 1.5 seconds");
   strcpy(buf, "BWD "); strcat_P(buf, STR_SPEED); strcat(buf, ": 180");
   printToDisplay(4, buf);
-  setMotorState(false, BACKWARD, 180);
+  setMotorState(false, BACKWARD, 100);
   delay(1500);
   
   setMotorState(false, COAST, 0);
@@ -432,8 +432,8 @@ void testRotateClockwise() {
   strcpy_P(buf, STR_SPEED); strcat(buf, ": 150");
   printToDisplay(4, buf);
   printToDisplayP(6, STR_ROTATING);
-  setMotorState(true, BACKWARD, 150);   // Left backward
-  setMotorState(false, FORWARD, 150);   // Right forward
+  setMotorState(true, BACKWARD, 100);   // Left backward
+  setMotorState(false, FORWARD, 100);   // Right forward
   delay(2000);
   
   setMotorState(true, COAST, 0);
@@ -450,8 +450,8 @@ void testRotateCounterClockwise() {
   strcpy_P(buf, STR_SPEED); strcat(buf, ": 150");
   printToDisplay(4, buf);
   printToDisplayP(6, STR_ROTATING);
-  setMotorState(true, FORWARD, 150);    // Left forward
-  setMotorState(false, BACKWARD, 150);  // Right backward
+  setMotorState(true, FORWARD, 100);    // Left forward
+  setMotorState(false, BACKWARD, 100);  // Right backward
   delay(2000);
   
   setMotorState(true, COAST, 0);
