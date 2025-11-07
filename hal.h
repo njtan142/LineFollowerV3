@@ -21,7 +21,7 @@ public:
         };
         
         struct Right {
-            static const uint8_t IN1 = 13;
+            static const uint8_t IN1 = 11;  // Changed from 13 to avoid built-in LED
             static const uint8_t IN2 = 4;
             static const uint8_t PWM = 10;  // Must be PWM-capable pin
         };
