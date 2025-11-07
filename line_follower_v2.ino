@@ -512,9 +512,9 @@ void performLineFollowing() {
   u8x8.clear();
   u8x8.setCursor(0, 0);
   u8x8.print("LINE FOLLOW");
-  u8x8.setCursor(0, 1);
+  u8x8.setCursor(0, 2);
   u8x8.print("Press to stop");
-  u8x8.setCursor(0, 3);
+  u8x8.setCursor(0, 4);
   u8x8.print("Starting...");
   
   // Give user time to read the message
