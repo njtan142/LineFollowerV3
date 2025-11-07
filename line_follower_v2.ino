@@ -404,9 +404,9 @@ void performCalibration() {
   lineSensor.beginCalibration();
   
   // Calibration parameters
-  const int sweepSpeed = 150;  // Medium speed for smooth, controlled sweeps
-  const int sweepTime = 20;   // Time to sweep in each direction (milliseconds)
-  const int totalSweeps = 100;  // Number of complete left-right-left sweeps
+  const int sweepSpeed = 255;  // Medium speed for smooth, controlled sweeps
+  const int sweepTime = 50;   // Time to sweep in each direction (milliseconds)
+  const int totalSweeps = 40;  // Number of complete left-right-left sweeps
   
   Timer sweepTimer;
   
@@ -476,6 +476,67 @@ void performCalibration() {
   u8x8.setCursor(0, 6);
   u8x8.print("COMPLETE!");
   delay(1500);  // Display completion message for 1.5 seconds
+  
+  // Display calibration results - min and max values for all sensors
+  // Get pointers to calibration data
+  const int* sensorMin = lineSensor.getSensorMin();
+  const int* sensorMax = lineSensor.getSensorMax();
+  
+  // Phase 1: Display first 4 sensors (0-3) for 5 seconds
+  u8x8.clear();
+  u8x8.setCursor(0, 0);
+  u8x8.print("S0:");
+  u8x8.print(sensorMin[0]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[0]);
+  
+  u8x8.setCursor(0, 2);
+  u8x8.print("S1:");
+  u8x8.print(sensorMin[1]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[1]);
+  
+  u8x8.setCursor(0, 4);
+  u8x8.print("S2:");
+  u8x8.print(sensorMin[2]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[2]);
+  
+  u8x8.setCursor(0, 6);
+  u8x8.print("S3:");
+  u8x8.print(sensorMin[3]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[3]);
+  
+  delay(5000);  // Show first 4 sensors for 5 seconds
+  
+  // Phase 2: Display last 4 sensors (4-7) for 5 seconds
+  u8x8.clear();
+  u8x8.setCursor(0, 0);
+  u8x8.print("S4:");
+  u8x8.print(sensorMin[4]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[4]);
+  
+  u8x8.setCursor(0, 2);
+  u8x8.print("S5:");
+  u8x8.print(sensorMin[5]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[5]);
+  
+  u8x8.setCursor(0, 4);
+  u8x8.print("S6:");
+  u8x8.print(sensorMin[6]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[6]);
+  
+  u8x8.setCursor(0, 6);
+  u8x8.print("S7:");
+  u8x8.print(sensorMin[7]);
+  u8x8.print("-");
+  u8x8.print(sensorMax[7]);
+  
+  delay(5000);  // Show last 4 sensors for 5 seconds
   
   // Return to main menu
   u8x8.clear();
