@@ -54,22 +54,23 @@ void LineSensor::readSensorsRaw(){
         }
     } 
     // MODIFIED MODE: 6 physical sensors + 2 calculated virtual sensors
-    // Hardware mapping: s1→A0, s3→A1, s4→A2, s5→A3, s6→A4, s8→A5
-    // Physical layout: s1(leftmost), s3, s4, s5, s6, s8(rightmost)
-    // Array positions: 0(actual), 1(virtual), 2-5(actual), 6(virtual), 7(actual)
+    // Hardware mapping: s8→A0, s6→A1, s5→A2, s4→A3, s3→A4, s1→A5
+    // Physical layout: s8(rightmost), s6, s5, s4, s3, s1(leftmost)
+    // Array positions: 0(actual-RIGHT), 1(virtual), 2-5(actual), 6(virtual), 7(actual-LEFT)
     else {
         // Read 6 physical sensors from A0-A5 into specific array positions
-        sensorValues[0] = analogRead(A0);  // s1 - leftmost actual sensor
-        sensorValues[2] = analogRead(A1);  // s3 - position 2
-        sensorValues[3] = analogRead(A2);  // s4 - position 3 (center-left)
-        sensorValues[4] = analogRead(A3);  // s5 - position 4 (center-right)
-        sensorValues[5] = analogRead(A4);  // s6 - position 5
-        sensorValues[7] = analogRead(A5);  // s8 - rightmost actual sensor
+        // REVERSED: rightmost sensor is at A0 (index 0), leftmost at A5 (index 7)
+        sensorValues[0] = analogRead(A0);  // s8 - rightmost actual sensor
+        sensorValues[2] = analogRead(A1);  // s6 - position 2
+        sensorValues[3] = analogRead(A2);  // s5 - position 3 (center-right)
+        sensorValues[4] = analogRead(A3);  // s4 - position 4 (center-left)
+        sensorValues[5] = analogRead(A4);  // s3 - position 5
+        sensorValues[7] = analogRead(A5);  // s1 - leftmost actual sensor
         
         // Create virtual sensors by averaging adjacent physical sensors
         // This provides smoother transitions and better position interpolation
-        sensorValues[1] = (sensorValues[0] + sensorValues[2]) / 2;  // 2nd leftmost (virtual between s1 and s3)
-        sensorValues[6] = (sensorValues[5] + sensorValues[7]) / 2;  // 2nd rightmost (virtual between s6 and s8)
+        sensorValues[1] = (sensorValues[0] + sensorValues[2]) / 2;  // 2nd from right (virtual)
+        sensorValues[6] = (sensorValues[5] + sensorValues[7]) / 2;  // 2nd from left (virtual)
     }
 }
 
@@ -189,6 +190,7 @@ int LineSensor::getPosition(){
         bool onLine = sensorValues[i] > sensorThreshold[i];
         if (onLine) {
             // Weight by sensor position (0-7) scaled by 1000 for precision
+            // Index 0 = rightmost sensor, Index 7 = leftmost sensor
             weighted += (long)i * Constants::LineSensor::POSITION_SCALE;
             count++;
         }

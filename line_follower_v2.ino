@@ -556,7 +556,7 @@ void performLineFollowing()
   float kd = (float)settings.kd / settings.pidScale;
 
   PIDController pid(kp, ki, kd);
-  pid.setMaxOutput(255.0);    // Maximum speed correction
+  pid.setMaxOutput(510.0);    // Maximum speed correction (2x motor range for differential steering)
   pid.setMaxIntegral(1000.0); // Prevent integral windup
 
   DEBUG_PRINT("PID Gains - Kp: ");
@@ -592,7 +592,8 @@ void performLineFollowing()
     deltaTimer.start();
 
     // Read current line position from sensors
-    // Position ranges from -3500 (left) to +3500 (right), 0 = centered
+    // Position: -3500 (RIGHT), 0 (centered), +3500 (LEFT)
+    // Hardware: Index 0 = rightmost sensor (A0), Index 7 = leftmost sensor
     lineSensor.readSensors();
     int linePosition = lineSensor.getPosition();
     
@@ -601,14 +602,14 @@ void performLineFollowing()
 
     // Calculate PID correction
     // Setpoint is 0 (line centered under robot)
-    // Negative correction = line is left, need to turn left (speed up left, slow right)
-    // Positive correction = line is right, need to turn right (slow left, speed up right)
+    // Negative position (RIGHT) → positive correction → increase left, decrease right → turn RIGHT
+    // Positive position (LEFT) → negative correction → decrease left, increase right → turn LEFT
     float correction = pid.compute(0, linePosition);
 
     // Apply correction to motor speeds using differential steering
     // Base speed is the target forward speed from settings
-    int leftSpeed = settings.baseSpeed + correction;   // Line right = positive correction = slow left
-    int rightSpeed = settings.baseSpeed - correction;  // Line right = positive correction = speed up right
+    int leftSpeed = settings.baseSpeed + correction;   // Positive correction increases left speed
+    int rightSpeed = settings.baseSpeed - correction;  // Positive correction decreases right speed
 
     // Clamp speeds to valid range (-255 to 255)
     // Negative speeds will reverse the motor for sharp turns
@@ -653,7 +654,7 @@ void performLineFollowing()
     DEBUG_PRINT(" R: ");
     DEBUG_PRINTLN(rightSpeed);
 
-    delay(750);
+    delay(500);
   }
 
   // Stop motors when exiting
