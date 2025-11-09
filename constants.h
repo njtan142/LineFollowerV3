@@ -47,8 +47,8 @@ namespace Constants {
      * @brief Motor control constants for speed and movement
      */
     namespace Motor {
-        /** @brief Minimum motor PWM speed (stopped) */
-        static const uint8_t SPEED_MIN = 0;
+        /** @brief Minimum motor PWM speed (reverse) */
+        static const uint8_t SPEED_MIN = -255;
         
         /** @brief Maximum motor PWM speed (8-bit PWM) */
         static const uint8_t SPEED_MAX = 255;

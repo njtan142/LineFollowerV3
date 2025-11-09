@@ -39,6 +39,7 @@
 #include <U8x8lib.h>
 #include "menu_system.h"
 #include "settings_menu.h"
+#include "test_menu.h"
 #include "pid_edit.h"
 #include "pid_controller.h"
 #include "line_sensor.h"
@@ -89,11 +90,15 @@ enum UIState
 {
   MAIN_MENU,     // Top-level menu: CFG, CALIBRT, RUN
   SETTINGS_MENU, // Configuration submenu
-  PID_EDIT       // PID parameter editing screen
+  PID_EDIT,      // PID parameter editing screen
+  TEST_MENU,     // Test menu: motor and sensor tests
+  MOTOR_TEST,    // Motor test submenu
+  SENSOR_TEST    // Line sensor test screen
 };
 UIState currentState = MAIN_MENU;
 bool settingsMenuInitialized = false;
 bool pidEditInitialized = false;
+bool testMenuInitialized = false;
 
 /**
  * Main Menu Items
@@ -108,6 +113,7 @@ const uint8_t MENU_ITEM_COUNT = 3;
 // Menu system instances
 MenuSystem mainMenu(&u8x8, menuItems, MENU_ITEM_COUNT, "MENU", 3, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
 SettingsMenu settingsMenu(&u8x8, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
+TestMenu testMenu(&u8x8, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
 PIDEdit *pidEdit = nullptr; // Created dynamically when needed
 
 /**
@@ -180,6 +186,15 @@ void loop()
     break;
   case PID_EDIT:
     handlePIDEdit();
+    break;
+  case TEST_MENU:
+    handleTestMenu();
+    break;
+  case MOTOR_TEST:
+    handleMotorTest();
+    break;
+  case SENSOR_TEST:
+    handleSensorTest();
     break;
   }
 
@@ -286,7 +301,18 @@ void handleSettingsMenu()
     // TEST - Motor and sensor testing interface
     case 1:
       DEBUG_PRINTLN("-> Navigate to Test menu");
-      // TODO: Implement test menu
+      currentState = TEST_MENU;
+      if (!testMenuInitialized)
+      {
+        testMenu.begin();
+        testMenuInitialized = true;
+      }
+      else
+      {
+        testMenu.requestRedraw();
+      }
+      // Clear any pending button state after menu transition
+      testMenu.update();
       break;
 
     // THRESH - Adjust sensor threshold ratio
@@ -675,4 +701,218 @@ void performLineFollowing()
   mainMenu.requestRedraw();
 
   DEBUG_PRINTLN("Line following complete");
+}
+
+/**
+ * Test Menu Handler
+ *
+ * Manages the test menu interface with motor and sensor test options.
+ *
+ * Menu options:
+ * - MOTOR: Navigate to motor test submenu
+ * - SENSOR: Navigate to line sensor test display
+ * - BACK: Return to settings menu
+ */
+void handleTestMenu()
+{
+  // Update menu UI
+  testMenu.update();
+
+  // Log selection changes for debugging
+  if (testMenu.hasNewSelection())
+  {
+    DEBUG_PRINT("Test Menu - Selection: ");
+    DEBUG_PRINTLN(testMenu.getSelectedItem());
+  }
+
+  // Process button press
+  if (testMenu.isButtonJustPressed())
+  {
+    uint8_t selection = testMenu.getSelection();
+    DEBUG_PRINT("Test Menu Button pressed! Selected: ");
+    DEBUG_PRINTLN(testMenu.getSelectedItem());
+
+    // Execute action based on selected menu item
+    switch (selection)
+    {
+    // MOTOR - Run motor test cycle
+    case 0:
+      DEBUG_PRINTLN("-> Starting Motor Test Cycle");
+      currentState = MOTOR_TEST;
+      delay(100);
+      break;
+
+    // SENSOR - Navigate to line sensor test screen
+    case 1:
+      DEBUG_PRINTLN("-> Navigate to Sensor Test");
+      currentState = SENSOR_TEST;
+      u8x8.clear();
+      delay(100);
+      break;
+
+    // BACK - Return to settings menu
+    case 2:
+      DEBUG_PRINTLN("-> Returning to Settings Menu");
+      currentState = SETTINGS_MENU;
+      settingsMenu.requestRedraw();
+      u8x8.clear();
+      delay(100);
+      settingsMenu.update(); // Clear any pending button state
+      break;
+
+    default:
+      DEBUG_PRINTLN("-> Invalid selection");
+      break;
+    }
+  }
+}
+
+/**
+ * Motor Test Handler
+ *
+ * Runs a complete motor test cycle automatically when entered.
+ * Tests all motor functions sequentially with display off during tests.
+ *
+ * Test sequence:
+ * 1. Both motors forward
+ * 2. Both motors backward
+ * 3. Left motor forward only
+ * 4. Right motor forward only
+ * 5. Rotate clockwise
+ * 6. Rotate counter-clockwise
+ *
+ * After completion, returns to test menu automatically.
+ */
+void handleMotorTest()
+{
+  DEBUG_PRINTLN("Starting motor test cycle...");
+  
+  // Display start message
+  u8x8.clear();
+  u8x8.setFont(u8x8_font_8x13_1x2_f);
+  u8x8.setCursor(0, 0);
+  u8x8.print("MOTOR TEST");
+  u8x8.setCursor(0, 2);
+  u8x8.print("STARTING...");
+  delay(1000);
+  
+  // Turn off display during tests
+  u8x8.setPowerSave(1);
+  
+  const int testSpeed = 150; // Test speed for motors
+  const int testDuration = 2000; // Run for 2 seconds each
+  
+  // Test 1: Both motors forward
+  DEBUG_PRINTLN("Test 1: Both Forward");
+  leftMotor->setSpeed(testSpeed);
+  rightMotor->setSpeed(testSpeed);
+  leftMotor->update();
+  rightMotor->update();
+  delay(testDuration);
+  leftMotor->brake();
+  rightMotor->brake();
+  delay(500);
+  
+  // Test 2: Both motors backward
+  DEBUG_PRINTLN("Test 2: Both Backward");
+  leftMotor->setSpeed(-testSpeed);
+  rightMotor->setSpeed(-testSpeed);
+  leftMotor->update();
+  rightMotor->update();
+  delay(testDuration);
+  leftMotor->brake();
+  rightMotor->brake();
+  delay(500);
+  
+  // Test 3: Left motor forward only
+  DEBUG_PRINTLN("Test 3: Left Forward");
+  leftMotor->setSpeed(testSpeed);
+  rightMotor->setSpeed(0);
+  leftMotor->update();
+  rightMotor->update();
+  delay(testDuration);
+  leftMotor->brake();
+  rightMotor->brake();
+  delay(500);
+  
+  // Test 4: Right motor forward only
+  DEBUG_PRINTLN("Test 4: Right Forward");
+  leftMotor->setSpeed(0);
+  rightMotor->setSpeed(testSpeed);
+  leftMotor->update();
+  rightMotor->update();
+  delay(testDuration);
+  leftMotor->brake();
+  rightMotor->brake();
+  delay(500);
+  
+  // Test 5: Rotate clockwise (left forward, right backward)
+  DEBUG_PRINTLN("Test 5: Rotate Clockwise");
+  leftMotor->setSpeed(testSpeed);
+  rightMotor->setSpeed(-testSpeed);
+  leftMotor->update();
+  rightMotor->update();
+  delay(testDuration);
+  leftMotor->brake();
+  rightMotor->brake();
+  delay(500);
+  
+  // Test 6: Rotate counter-clockwise (left backward, right forward)
+  DEBUG_PRINTLN("Test 6: Rotate Counter-Clockwise");
+  leftMotor->setSpeed(-testSpeed);
+  rightMotor->setSpeed(testSpeed);
+  leftMotor->update();
+  rightMotor->update();
+  delay(testDuration);
+  leftMotor->brake();
+  rightMotor->brake();
+  delay(500);
+  
+  // Turn display back on
+  u8x8.setPowerSave(0);
+  
+  // Show completion message
+  u8x8.clear();
+  u8x8.setCursor(0, 0);
+  u8x8.print("MOTOR TEST");
+  u8x8.setCursor(0, 2);
+  u8x8.print("COMPLETE!");
+  delay(1500);
+  
+  DEBUG_PRINTLN("Motor test cycle complete");
+  
+  // Return to test menu
+  currentState = TEST_MENU;
+  testMenu.requestRedraw();
+  u8x8.clear();
+  delay(100);
+  testMenu.update(); // Clear any pending button state
+}
+
+/**
+ * Sensor Test Handler
+ *
+ * Displays raw line sensor readings with ability to cycle through sensors.
+ * Non-scrolling display that shows one sensor at a time with its raw reading.
+ *
+ * Controls:
+ * - Potentiometer: Change selected sensor (0-7)
+ * - Button: Exit back to test menu
+ */
+void handleSensorTest()
+{
+  static uint8_t selectedSensor = 0;
+
+  // Display sensor test and check for exit
+  bool exitRequested = testMenu.displaySensorTest(&lineSensor, selectedSensor);
+
+  if (exitRequested)
+  {
+    DEBUG_PRINTLN("Sensor Test - Exit requested");
+    currentState = TEST_MENU;
+    testMenu.requestRedraw();
+    u8x8.clear();
+    delay(100);
+    testMenu.update(); // Clear any pending button state
+  }
 }
