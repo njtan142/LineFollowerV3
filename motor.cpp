@@ -30,9 +30,7 @@ void Motor::setState(MotorState state) {
  * Positive speed = forward, negative speed = backward
  */
 void Motor::setSpeed(int targetSpeed) {
-    speed = constrain(targetSpeed + alignmentOffset, 
-                     Constants::Motor::SPEED_MIN, 
-                     Constants::Motor::SPEED_MAX);
+    speed = constrain(targetSpeed, -255, 255);
 }
 
 /**

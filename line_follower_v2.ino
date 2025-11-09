@@ -40,6 +40,8 @@
 #include "menu_system.h"
 #include "settings_menu.h"
 #include "test_menu.h"
+#include "view_data.h"
+#include "factory_reset.h"
 #include "pid_edit.h"
 #include "pid_controller.h"
 #include "line_sensor.h"
@@ -92,13 +94,17 @@ enum UIState
   SETTINGS_MENU, // Configuration submenu
   PID_EDIT,      // PID parameter editing screen
   TEST_MENU,     // Test menu: motor and sensor tests
-  MOTOR_TEST,    // Motor test submenu
-  SENSOR_TEST    // Line sensor test screen
+  MOTOR_TEST,    // Motor test cycle
+  SENSOR_TEST,   // Line sensor test screen
+  VIEW_DATA,     // View configuration data
+  FACTORY_RESET  // Factory reset confirmation
 };
 UIState currentState = MAIN_MENU;
 bool settingsMenuInitialized = false;
 bool pidEditInitialized = false;
 bool testMenuInitialized = false;
+bool viewDataInitialized = false;
+bool factoryResetInitialized = false;
 
 /**
  * Main Menu Items
@@ -114,6 +120,8 @@ const uint8_t MENU_ITEM_COUNT = 3;
 MenuSystem mainMenu(&u8x8, menuItems, MENU_ITEM_COUNT, "MENU", 3, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
 SettingsMenu settingsMenu(&u8x8, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
 TestMenu testMenu(&u8x8, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
+ViewData viewData(&u8x8, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
+FactoryReset factoryReset(&u8x8, POT_PIN, BUTTON_PIN, POT_ENABLE_PIN);
 PIDEdit *pidEdit = nullptr; // Created dynamically when needed
 
 /**
@@ -195,6 +203,12 @@ void loop()
     break;
   case SENSOR_TEST:
     handleSensorTest();
+    break;
+  case VIEW_DATA:
+    handleViewData();
+    break;
+  case FACTORY_RESET:
+    handleFactoryReset();
     break;
   }
 
@@ -348,13 +362,33 @@ void handleSettingsMenu()
     // VWDATA - View live sensor data
     case 7:
       DEBUG_PRINTLN("-> Navigate to View Data");
-      // TODO: Implement view data
+      currentState = VIEW_DATA;
+      if (!viewDataInitialized)
+      {
+        viewData.begin();
+        viewDataInitialized = true;
+      }
+      else
+      {
+        viewData.requestRedraw();
+      }
+      delay(100);
       break;
 
     // FACRST - Factory reset confirmation
     case 8:
       DEBUG_PRINTLN("-> Navigate to Factory Reset");
-      // TODO: Implement factory reset
+      currentState = FACTORY_RESET;
+      if (!factoryResetInitialized)
+      {
+        factoryReset.begin();
+        factoryResetInitialized = true;
+      }
+      else
+      {
+        factoryReset.requestRedraw();
+      }
+      delay(100);
       break;
 
     // BACK - Return to main menu
@@ -476,7 +510,7 @@ void performCalibration()
   u8x8.setCursor(0, 0);
   u8x8.print("CALIBRATING");
   u8x8.setCursor(0, 2);
-  u8x8.print("Rotating...");
+  u8x8.print("ROTATING...");
 
   // Initialize calibration (reset sensor min/max tracking)
   lineSensor.beginCalibration();
@@ -510,7 +544,7 @@ void performCalibration()
   }
 
   u8x8.setCursor(0, 4);
-  u8x8.print("Readings: ");
+  u8x8.print("READINGS: ");
   u8x8.print(readings);
 
   // Stop motors and finalize calibration
@@ -601,6 +635,32 @@ void performLineFollowing()
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   bool lastButtonState = digitalRead(BUTTON_PIN);
 
+  // Initialize line position for first iteration
+  lineSensor.readSensors();
+  int linePosition = lineSensor.getPosition();
+  int lastKnownPosition = 0; // Track last position when line was visible
+
+  // Track position history for curve correction
+  int positionHistory[3] = {0, 0, 0}; // [2 iterations ago, 1 iteration ago, current]
+  int historyIndex = 0;
+
+  // Define turning states
+  enum TurningState {
+    PID_TURNING,      // Line is visible, use PID control
+    TURN_LEFT,        // Line lost, turn left to find it
+    TURN_RIGHT        // Line lost, turn right to find it
+  };
+  TurningState currentTurningState = PID_TURNING;
+
+  // Clear display once at the start and set up labels
+  u8x8.clear();
+  // Row 0: Labels
+  u8x8.setCursor(0, 0);
+  u8x8.print("POS  CNT  BLK");
+  // Row 2: Motor speed labels and state
+  u8x8.setCursor(0, 4);
+  u8x8.print("L:   S:   R:");
+
   // Main control loop - runs until button is pressed
   while (true)
   {
@@ -617,30 +677,99 @@ void performLineFollowing()
     unsigned long deltaTime = deltaTimer.elapsed();
     deltaTimer.start();
 
-    // Read current line position from sensors
-    // Position: -3500 (RIGHT), 0 (centered), +3500 (LEFT)
-    // Hardware: Index 0 = rightmost sensor (A0), Index 7 = leftmost sensor
-    lineSensor.readSensors();
-    int linePosition = lineSensor.getPosition();
+    // Use line position from previous iteration (or initial reading for first iteration)
+    // This position is the averaged value from the last movement cycle
     
-    // Debug: Get sensor count to see if any sensors detect the line
+    // Update position history (shift old values)
+    positionHistory[0] = positionHistory[1]; // 2 iterations ago
+    positionHistory[1] = positionHistory[2]; // 1 iteration ago
+    positionHistory[2] = linePosition;       // current
+    
+    // Apply curve correction logic:
+    // If we were turning (pos[0] != near zero), then went straight (pos[1] near zero),
+    // and now reading opposite direction (pos[2] opposite sign of pos[0]),
+    // override pos[2] to continue in original curve direction
+    const int straightThreshold = 1000; // Position considered "straight/forward"
+    
+    if (historyIndex >= 2) { // Only apply after we have enough history
+      bool wasTurning = abs(positionHistory[0]) > straightThreshold;
+      bool wentStraight = abs(positionHistory[1]) < straightThreshold;
+      bool nowOpposite = (positionHistory[0] > 0 && positionHistory[2] < -straightThreshold) ||
+                         (positionHistory[0] < 0 && positionHistory[2] > straightThreshold);
+      
+      if (wasTurning && wentStraight && nowOpposite) {
+        // Override: continue in the original curve direction
+        linePosition = positionHistory[0]; // Use the direction from 2 iterations ago
+        positionHistory[2] = linePosition; // Update history with corrected value
+        
+        DEBUG_PRINTLN("CURVE CORRECTION APPLIED!");
+        DEBUG_PRINT("  Was turning: ");
+        DEBUG_PRINT(positionHistory[0]);
+        DEBUG_PRINT(" -> Straight: ");
+        DEBUG_PRINT(positionHistory[1]);
+        DEBUG_PRINT(" -> Corrected from: ");
+        DEBUG_PRINT(positionHistory[2]);
+        DEBUG_PRINT(" to: ");
+        DEBUG_PRINTLN(linePosition);
+      }
+    }
+    
+    historyIndex++; // Increment history counter
+    
+    // Read sensor data to determine current state
     int blackCount = lineSensor.getBlackSensorCount();
+    
+    // Determine turning state based on line detection
+    if (blackCount > 0) {
+      // Line is visible - use PID control
+      currentTurningState = PID_TURNING;
+      lastKnownPosition = linePosition; // Update last known position
+    } else {
+      // Line is lost - turn in direction of last known position
+      if (lastKnownPosition < 0) {
+        // Line was on the right, turn right to find it
+        currentTurningState = TURN_RIGHT;
+      } else {
+        // Line was on the left (or centered), turn left to find it
+        currentTurningState = TURN_LEFT;
+      }
+    }
 
-    // Calculate PID correction
-    // Setpoint is 0 (line centered under robot)
-    // Negative position (RIGHT) → positive correction → increase left, decrease right → turn RIGHT
-    // Positive position (LEFT) → negative correction → decrease left, increase right → turn LEFT
-    float correction = pid.compute(0, linePosition);
+    int leftSpeed, rightSpeed;
+    
+    // Execute behavior based on current state
+    switch (currentTurningState) {
+      case PID_TURNING:
+        {
+          // Line is visible - use PID control for smooth following
+          // Calculate PID correction
+          // Setpoint is 0 (line centered under robot)
+          // Negative position (RIGHT) → positive correction → increase left, decrease right → turn RIGHT
+          // Positive position (LEFT) → negative correction → decrease left, increase right → turn LEFT
+          float correction = pid.compute(0, linePosition);
 
-    // Apply correction to motor speeds using differential steering
-    // Base speed is the target forward speed from settings
-    int leftSpeed = settings.baseSpeed + correction;   // Positive correction increases left speed
-    int rightSpeed = settings.baseSpeed - correction;  // Positive correction decreases right speed
-
-    // Clamp speeds to valid range (-255 to 255)
-    // Negative speeds will reverse the motor for sharp turns
-    leftSpeed = constrain(leftSpeed, -255, 255);
-    rightSpeed = constrain(rightSpeed, -255, 255);
+          // Apply correction to motor speeds using differential steering
+          leftSpeed = settings.baseSpeed + correction;
+          rightSpeed = settings.baseSpeed - correction;
+          
+          // Clamp speeds to valid range (-255 to 255)
+          leftSpeed = constrain(leftSpeed, -255, 255);
+          rightSpeed = constrain(rightSpeed, -255, 255);
+        }
+        break;
+        
+      case TURN_LEFT:
+        // Line lost, last seen on left - turn left aggressively to find it
+        leftSpeed = -settings.baseSpeed;  // Left motor backward
+        rightSpeed = settings.baseSpeed;   // Right motor forward
+        break;
+        
+      case TURN_RIGHT:
+        // Line lost, last seen on right - turn right aggressively to find it
+        leftSpeed = settings.baseSpeed;    // Left motor forward
+        rightSpeed = -settings.baseSpeed;  // Right motor backward
+        break;
+    }
 
     // Set motor speeds
     leftMotor->setSpeed(leftSpeed);
@@ -650,37 +779,104 @@ void performLineFollowing()
     leftMotor->update();
     rightMotor->update();
 
-    delay(30);
+    // Movement duration in milliseconds
+    const unsigned long movementDuration = 40;
+    
+    // Continuously read position during movement and calculate average
+    Timer movementTimer;
+    movementTimer.start();
+    long positionSum = 0;
+    int readingCount = 0;
+      
+    while (movementTimer.elapsed() < movementDuration)
+    {
+      lineSensor.readSensors();
+      positionSum += lineSensor.getPosition();
+      readingCount++;
+    }
+    
+    // Calculate average position from all readings during movement
+    // This will be used for PID calculation in the NEXT iteration
+    linePosition = (readingCount > 0) ? (positionSum / readingCount) : linePosition;
+    int avgBlackCount = lineSensor.getBlackSensorCount();
+    
     leftMotor->brake();
     rightMotor->brake();
 
-    u8x8.clear();
-
+    // Update only the values, not the labels (selective update)
     // u8x8.setPowerSave(0);  // Turn on display temporarily
-    u8x8.setCursor(0, 0);
-    u8x8.print(linePosition);
-
+    
+    // Row 0 (line 2): Values for POS, CNT, BLK
     u8x8.setCursor(0, 2);
-    u8x8.print(blackCount);
+    u8x8.print(linePosition);
+    
+    u8x8.setCursor(5, 2);
+    u8x8.print(readingCount);
+    
+    u8x8.setCursor(10, 2);
+    u8x8.print(avgBlackCount);
 
-    u8x8.setCursor(0, 4);
+    // Row 2 (line 6): Left speed, State, Right speed
+    u8x8.setCursor(0, 6);
     u8x8.print(leftSpeed);
-    u8x8.print(" <-> ");
+    
+    u8x8.setCursor(5, 6);
+    switch (currentTurningState) {
+      case PID_TURNING:
+        // Show PID direction based on line position
+        if (linePosition > straightThreshold) {
+          u8x8.print("PL "); // PID turning Left
+        } else if (linePosition < -straightThreshold) {
+          u8x8.print("PR "); // PID turning Right
+        } else {
+          u8x8.print("PF "); // PID going Forward/centered
+        }
+        break;
+      case TURN_LEFT:
+        u8x8.print("LFT");
+        break;
+      case TURN_RIGHT:
+        u8x8.print("RGT");
+        break;
+    }
+    
+    u8x8.setCursor(11, 6);
     u8x8.print(rightSpeed);
 
     // Debug output for monitoring (only when DEBUG_SERIAL is enabled)
-    DEBUG_PRINT("POS: ");
+    DEBUG_PRINT("STATE: ");
+    switch (currentTurningState) {
+      case PID_TURNING:
+        // Show PID direction in debug output
+        if (linePosition > straightThreshold) {
+          DEBUG_PRINT("PID_LEFT");
+        } else if (linePosition < -straightThreshold) {
+          DEBUG_PRINT("PID_RIGHT");
+        } else {
+          DEBUG_PRINT("PID_FWD");
+        }
+        break;
+      case TURN_LEFT:
+        DEBUG_PRINT("LEFT");
+        break;
+      case TURN_RIGHT:
+        DEBUG_PRINT("RIGHT");
+        break;
+    }
+    DEBUG_PRINT(" | POS: ");
     DEBUG_PRINT(linePosition);
+    DEBUG_PRINT(" | READINGS: ");
+    DEBUG_PRINT(readingCount);
     DEBUG_PRINT(" | BLACK: ");
-    DEBUG_PRINT(blackCount);
-    DEBUG_PRINT(" | CORR: ");
-    DEBUG_PRINT(correction);
+    DEBUG_PRINT(avgBlackCount);
+    DEBUG_PRINT(" | LAST: ");
+    DEBUG_PRINT(lastKnownPosition);
     DEBUG_PRINT(" | L: ");
     DEBUG_PRINT(leftSpeed);
     DEBUG_PRINT(" R: ");
     DEBUG_PRINTLN(rightSpeed);
 
-    delay(500);
+    delay(50);
   }
 
   // Stop motors when exiting
@@ -914,5 +1110,112 @@ void handleSensorTest()
     u8x8.clear();
     delay(100);
     testMenu.update(); // Clear any pending button state
+  }
+}
+
+/**
+ * View Data Handler
+ *
+ * Displays system configuration data across multiple pages.
+ * User can scroll through pages using potentiometer.
+ *
+ * Pages:
+ * 0. PID Values (KP, KI, KD)
+ * 1. Motor Settings (Speed, Alignment, Scale)
+ * 2. Sensor Mode (8CH/6CH, Threshold, Calibration)
+ * 3. Control Settings (PID Mode, Display Auto-off)
+ * 4. System Info (Free RAM, Settings validity)
+ *
+ * Controls:
+ * - Potentiometer: Scroll through pages
+ * - Button: Exit back to settings menu
+ */
+void handleViewData()
+{
+  // Update view data screen and check for exit
+  bool exitRequested = viewData.update(&settings, &lineSensor);
+
+  if (exitRequested)
+  {
+    DEBUG_PRINTLN("View Data - Exit requested");
+    currentState = SETTINGS_MENU;
+    settingsMenu.requestRedraw();
+    u8x8.clear();
+    delay(100);
+    settingsMenu.update(); // Clear any pending button state
+  }
+}
+
+/**
+ * Factory Reset Handler
+ *
+ * Handles the factory reset confirmation and execution.
+ * Provides a two-step process:
+ * 1. Confirmation screen (YES/NO selection with potentiometer)
+ * 2. Reset execution (resets settings and sensor calibration)
+ * 3. Completion message
+ *
+ * Resets:
+ * - All settings to factory defaults (PID, motor, control)
+ * - Sensor calibration data
+ * - Saves defaults to EEPROM
+ *
+ * Controls:
+ * - Potentiometer: Toggle YES/NO
+ * - Button: Confirm selection or continue after reset
+ */
+void handleFactoryReset()
+{
+  // Update factory reset screen
+  // Returns: 0 = continue, 1 = cancelled, 2 = reset complete
+  uint8_t result = factoryReset.update(&settings, &lineSensor);
+
+  if (result == 1)
+  {
+    // User cancelled reset
+    DEBUG_PRINTLN("Factory Reset - Cancelled");
+    currentState = SETTINGS_MENU;
+    settingsMenu.requestRedraw();
+    u8x8.clear();
+    delay(100);
+    settingsMenu.update(); // Clear any pending button state
+  }
+  else if (result == 2)
+  {
+    // Reset completed successfully
+    DEBUG_PRINTLN("Factory Reset - Complete");
+    
+    // Reload settings into motors (they hold pointers to settings)
+    // Motors need to be recreated to use new settings
+    delete leftMotor;
+    delete rightMotor;
+    
+    leftMotor = new Motor(
+        HAL::MotorPins::Left::IN1,
+        HAL::MotorPins::Left::IN2,
+        HAL::MotorPins::Left::PWM,
+        HAL::MotorPins::STBY,
+        0,
+        &settings);
+    
+    rightMotor = new Motor(
+        HAL::MotorPins::Right::IN1,
+        HAL::MotorPins::Right::IN2,
+        HAL::MotorPins::Right::PWM,
+        HAL::MotorPins::STBY,
+        0,
+        &settings);
+    
+    // Return to settings menu
+    currentState = SETTINGS_MENU;
+    settingsMenu.requestRedraw();
+    u8x8.clear();
+    delay(100);
+    settingsMenu.update(); // Clear any pending button state
+    
+    // Reset initialization flags to ensure fresh start
+    factoryResetInitialized = false;
+    viewDataInitialized = false;
+    pidEditInitialized = false;
   }
 }
