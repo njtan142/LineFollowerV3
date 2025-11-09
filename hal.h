@@ -22,7 +22,7 @@ public:
         };
         
         struct Right {
-            static const uint8_t IN1 = 4;  // Changed from 13 to avoid built-in LED
+            static const uint8_t IN1 = 13;  // Changed from 13 to avoid built-in LED
             static const uint8_t IN2 = 11;
             static const uint8_t PWM = 6;   // Using left's PWM
         };

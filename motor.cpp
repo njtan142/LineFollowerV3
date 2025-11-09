@@ -16,6 +16,7 @@ Motor::Motor(int IN1_PIN, int IN2_PIN, int PWM_PIN, int Standby, int alignmentOf
     speed = 0;
     currentSpeed = 0;
     currentState = MotorState::BRAKE;
+    pinsInitialized = false;  // Pins will be initialized on first use
 }
 
 /**
@@ -23,6 +24,27 @@ Motor::Motor(int IN1_PIN, int IN2_PIN, int PWM_PIN, int Standby, int alignmentOf
  */
 void Motor::setState(MotorState state) {
     currentState = state;
+}
+
+/**
+ * Ensures pins are initialized before first use
+ * Called automatically by motor control functions
+ */
+void Motor::ensurePinsInitialized() {
+    if (!pinsInitialized) {
+        pinMode(IN1_PIN, OUTPUT);
+        pinMode(IN2_PIN, OUTPUT);
+        // pinMode(PWM_PIN, OUTPUT);
+        pinMode(Standby, OUTPUT);
+        
+        // Initialize to safe state (motor off)
+        // digitalWrite(IN1_PIN, LOW);
+        // digitalWrite(IN2_PIN, LOW);
+        // analogWrite(PWM_PIN, 0);
+        // digitalWrite(Standby, LOW);
+        
+        pinsInitialized = true;
+    }
 }
 
 /**
@@ -61,6 +83,7 @@ void Motor::update() {
  */
 void Motor::fwd(int speed)
 {
+   ensurePinsInitialized();
    digitalWrite(Standby, HIGH);
    digitalWrite(IN1_PIN, HIGH);
    digitalWrite(IN2_PIN, LOW);
@@ -72,6 +95,7 @@ void Motor::fwd(int speed)
  */
 void Motor::rev(int speed)
 {
+   ensurePinsInitialized();
    digitalWrite(Standby, HIGH);
    digitalWrite(IN1_PIN, LOW);
    digitalWrite(IN2_PIN, HIGH);
@@ -83,6 +107,7 @@ void Motor::rev(int speed)
  */
 void Motor::brake()
 {
+   ensurePinsInitialized();
    digitalWrite(Standby, HIGH);
    digitalWrite(IN1_PIN, HIGH);
    digitalWrite(IN2_PIN, HIGH);
@@ -94,6 +119,7 @@ void Motor::brake()
  */
 void Motor::standby()
 {
+   ensurePinsInitialized();
    digitalWrite(Standby, LOW);
 }
 

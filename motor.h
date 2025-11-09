@@ -100,6 +100,12 @@ class Motor {
         int alignmentOffset;        // Speed offset for motor matching
         const Settings* settings;   // Pointer to global configuration
         
+        // Initialization flag
+        bool pinsInitialized;      // True once pins are configured
+        
+        // Helper to ensure pins are initialized before first use
+        void ensurePinsInitialized();
+        
         // Low-level motor control functions (private - only called by update())
         void fwd(int speed);   // Drive forward at specified speed
         void rev(int speed);   // Drive reverse at specified speed
