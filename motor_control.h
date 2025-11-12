@@ -5,7 +5,7 @@
 
 /**
  * Motor Control Module - Header
- * 
+ *  
  * Static utility class providing high-level motor control functions for
  * differential drive robots. Wraps HAL (Hardware Abstraction Layer) calls
  * with convenient movement primitives.
@@ -14,14 +14,14 @@
  * - Simple API for common movements (forward, backward, turns)
  * - Direct motor control with signed speed values
  * - Automatic direction handling based on speed sign
- * - Standby mode for power saving
+ * - Standby mode for power saving  
  * 
  * Note: This is a simpler alternative to the Motor class for applications
  * that don't need smooth ramping or state machines. All methods are static.
  */
 
 #ifndef MOTOR_CONTROL_H
-#define MOTOR_CONTROL_H
+#define MOTOR_CONTROL_H 
 
 #include "hal.h"
 

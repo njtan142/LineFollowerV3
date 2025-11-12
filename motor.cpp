@@ -108,9 +108,9 @@ void Motor::rev(int speed)
 void Motor::brake()
 {
    ensurePinsInitialized();
-   digitalWrite(Standby, HIGH);
-   digitalWrite(IN1_PIN, HIGH);
-   digitalWrite(IN2_PIN, HIGH);
+   digitalWrite(Standby, LOW);
+   digitalWrite(IN1_PIN, LOW);
+   digitalWrite(IN2_PIN, LOW);
    analogWrite(PWM_PIN, 0);
 }
 

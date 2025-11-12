@@ -111,9 +111,9 @@ bool factoryResetInitialized = false;
  * Main Menu Items
  */
 const char *menuItems[] = {
+    "RUN",     // Start line following mode
     "CFG",     // Enter settings/configuration
-    "CALIBRT", // Calibrate line sensors
-    "RUN"      // Start line following mode
+    "CALIBRT"  // Calibrate line sensors
 };
 const uint8_t MENU_ITEM_COUNT = 3;
 
@@ -238,7 +238,11 @@ void handleMainMenu()
 
     switch (selection)
     {
-    case 0: // CFG
+    case 0: // RUN
+      DEBUG_PRINTLN("-> Starting Run Mode");
+      performLineFollowing();
+      break;
+    case 1: // CFG
       DEBUG_PRINTLN("-> Entering Settings Menu");
       currentState = SETTINGS_MENU;
       if (!settingsMenuInitialized)
@@ -253,13 +257,9 @@ void handleMainMenu()
       // Clear any pending button state after menu transition
       settingsMenu.update();
       break;
-    case 1: // CALIBRT
+    case 2: // CALIBRT
       DEBUG_PRINTLN("-> Starting Calibration");
       performCalibration();
-      break;
-    case 2: // RUN
-      DEBUG_PRINTLN("-> Starting Run Mode");
-      performLineFollowing();
       break;
     }
   }

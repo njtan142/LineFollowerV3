@@ -41,9 +41,26 @@ private:
     int rightTurnCount;
     int forwardCount;
     bool lastButtonState;
-    const int straightThreshold = 1000;
-    const unsigned long movementDuration = 40;
-    const unsigned long loopDelay = 50;
+    bool skipDisplay = true;
+    bool useAggressiveTurning = true;
+    bool useCurveCorrection = true;
+    const int straightThreshold = 750;
+    const unsigned long movementDuration = 10;
+    const unsigned long loopDelay = 0;
+    const unsigned long stateChangeDelay = 1;
+    
+    // Dynamic speed control
+    int currentBaseSpeed = 255;
+    bool hasEnteredAggressiveTurn = false;
+    unsigned long lastStraightSpeedIncrease = 0;
+    
+    // Last displayed values for change detection
+    int lastDisplayedPosition = -99999;
+    TurningState lastDisplayedState = PID_TURNING;
+    int lastDisplayedBlackCount = -1;
+    int lastDisplayedLeftTurnCount = -1;
+    int lastDisplayedRightTurnCount = -1;
+    int lastDisplayedForwardCount = -1;
   };
 
   State state;
@@ -98,7 +115,7 @@ private:
     state.positionHistory[1] = state.positionHistory[2]; // 1 iteration ago
     state.positionHistory[2] = state.linePosition;       // current
     
-    if (state.historyIndex >= 2) {
+    if (state.useCurveCorrection && state.historyIndex >= 2) {
       bool wasTurning = abs(state.positionHistory[0]) > state.straightThreshold;
       bool wentStraight = abs(state.positionHistory[1]) < state.straightThreshold;
       bool nowOpposite = (state.positionHistory[0] > 0 && state.positionHistory[2] < -state.straightThreshold) ||
@@ -127,18 +144,47 @@ private:
   /**
    * Determine which turning state the robot should be in based on sensor readings
    */
-  void determineTurningState(int blackCount) {
+  void determineTurningState(int blackCount, Motor* leftMotor, Motor* rightMotor) {
+    TurningState previousState = state.currentTurningState;
     if (blackCount > 0) {
       // Line is visible - use PID control
       state.currentTurningState = PID_TURNING;
       state.lastKnownPosition = state.linePosition;
     } else {
-      // Line is lost - turn in direction of last known position
-      if (state.lastKnownPosition < 0) {
-        state.currentTurningState = TURN_RIGHT;
+      // Line is lost
+      if (state.useAggressiveTurning) {
+        // Use aggressive turning - turn in direction of last known position
+        if (state.lastKnownPosition < 0) {
+          state.currentTurningState = TURN_RIGHT;
+        } else {
+          state.currentTurningState = TURN_LEFT;
+        }
+        
+        // Handle speed reduction when entering aggressive turn
+        if (previousState == PID_TURNING) {
+          if (!state.hasEnteredAggressiveTurn) {
+            // First time entering aggressive turn - set speed to 170
+            state.currentBaseSpeed = 170;
+            state.hasEnteredAggressiveTurn = true;
+            DEBUG_PRINTLN("First aggressive turn - speed set to 170");
+          } else {
+            // Subsequent turns - reduce by 5
+            state.currentBaseSpeed -= 5;
+            state.currentBaseSpeed = constrain(state.currentBaseSpeed, 150, 255);
+            DEBUG_PRINT("Aggressive turn - speed reduced to: ");
+            DEBUG_PRINTLN(state.currentBaseSpeed);
+          }
+          state.lastStraightSpeedIncrease = 0; // Reset straight speed timer
+        }
       } else {
-        state.currentTurningState = TURN_LEFT;
+        // Keep using PID turning even when line is lost
+        state.currentTurningState = PID_TURNING;
       }
+    }
+    if(previousState != state.currentTurningState){
+        leftMotor->brake();
+        rightMotor->brake();
+        delay(state.stateChangeDelay);
     }
   }
 
@@ -150,9 +196,30 @@ private:
     // Calculate PID correction (setpoint is 0 = line centered)
     float correction = pid.compute(0, state.linePosition);
     
+    // Check if position is within straight threshold and increase speed progressively
+    if (abs(state.linePosition) < state.straightThreshold) {
+      unsigned long currentTime = millis();
+      if (state.lastStraightSpeedIncrease == 0) {
+        state.lastStraightSpeedIncrease = currentTime;
+      }
+      
+      // Add 10 speed per second (1000ms)
+      if (currentTime - state.lastStraightSpeedIncrease >= 1000) {
+        state.currentBaseSpeed += 10;
+        state.currentBaseSpeed = constrain(state.currentBaseSpeed, 0, 255);
+        state.lastStraightSpeedIncrease = currentTime;
+        DEBUG_PRINT("Speed increased to: ");
+        DEBUG_PRINTLN(state.currentBaseSpeed);
+      }
+      isGoingForward = true;
+    } else {
+      // Reset timer when not going straight
+      state.lastStraightSpeedIncrease = 0;
+    }
+    
     // Apply correction using differential steering
-    leftSpeed = settings.baseSpeed + correction;
-    rightSpeed = settings.baseSpeed - correction;
+    leftSpeed = state.currentBaseSpeed + correction;
+    rightSpeed = state.currentBaseSpeed - correction;
     
     // Clamp speeds to valid range
     leftSpeed = constrain(leftSpeed, -255, 255);
@@ -163,18 +230,37 @@ private:
       isTurningLeft = true;
     } else if (state.linePosition < -state.straightThreshold) {
       isTurningRight = true;
-    } else {
-      isGoingForward = true;
     }
   }
 
   /**
-   * Execute aggressive left turn until line is found
+   * Execute aggressive turn until line is found
    * Returns true if should exit line following, false otherwise
    */
-  bool executeAggressiveLeftTurnUntilLineFound() {
-    int leftSpeed = -settings.baseSpeed;
-    int rightSpeed = settings.baseSpeed;
+  bool executeAggressiveTurnUntilLineFound(TurningState direction) {
+    int leftSpeed, rightSpeed;
+    int correctionLeftSpeed, correctionRightSpeed;
+    int minSensorsForLine;
+    int turnSpeed = 200;
+    int backwardBias = -20; // Backward movement component
+    const unsigned long turnTimeout = 400; // Maximum time to turn in one direction (ms)
+    
+    // Set turn direction and correction direction with backward bias
+    if (direction == TURN_LEFT) {
+      // Turn left while moving backward: left motor more negative, right motor less positive
+      leftSpeed = -turnSpeed + backwardBias;
+      rightSpeed = turnSpeed + backwardBias;
+      correctionLeftSpeed = turnSpeed + backwardBias;   // Correction: turn right while backward
+      correctionRightSpeed = -turnSpeed + backwardBias;
+      minSensorsForLine = 3;
+    } else { // TURN_RIGHT
+      // Turn right while moving backward: right motor more negative, left motor less positive
+      leftSpeed = turnSpeed + backwardBias;
+      rightSpeed = -turnSpeed + backwardBias;
+      correctionLeftSpeed = -turnSpeed + backwardBias;  // Correction: turn left while backward
+      correctionRightSpeed = turnSpeed + backwardBias;
+      minSensorsForLine = 3;
+    }
     
     leftMotor->setSpeed(leftSpeed);
     rightMotor->setSpeed(rightSpeed);
@@ -182,16 +268,10 @@ private:
     rightMotor->update();
     
     bool lineFound = false;
-    const int minSensorsForLine = 3;
+    Timer turnTimer;
+    turnTimer.start();
     
     while (!lineFound) {
-      // Check for button press to exit
-      if (checkForButtonPressToExit()) {
-        leftMotor->brake();
-        rightMotor->brake();
-        return true; // Signal to exit line following
-      }
-      
       lineSensor.readSensors();
       int tempPosition = lineSensor.getPosition();
       int tempBlackCount = lineSensor.getBlackSensorCount();
@@ -201,56 +281,29 @@ private:
           tempBlackCount >= 4) {
         state.linePosition = tempPosition;
         lineFound = true;
+        DEBUG_PRINTLN("Line found during turn!");
       }
       
-      delay(10);
-    }
-    
-    leftMotor->brake();
-    rightMotor->brake();
-    return false; // Continue line following
-  }
-
-  /**
-   * Execute aggressive right turn until line is found
-   * Returns true if should exit line following, false otherwise
-   */
-  bool executeAggressiveRightTurnUntilLineFound() {
-    int leftSpeed = settings.baseSpeed;
-    int rightSpeed = -settings.baseSpeed;
-    
-    leftMotor->setSpeed(leftSpeed);
-    rightMotor->setSpeed(rightSpeed);
-    leftMotor->update();
-    rightMotor->update();
-    
-    bool lineFound = false;
-    const int minSensorsForLine = 3;
-    
-    while (!lineFound) {
-      // Check for button press to exit
-      if (checkForButtonPressToExit()) {
+      // If timeout reached, switch direction
+      if (turnTimer.elapsed() >= turnTimeout) {
+        DEBUG_PRINTLN("Turn timeout - switching direction!");
         leftMotor->brake();
         rightMotor->brake();
-        return true; // Signal to exit line following
+        delay(50);
+        
+        // Reverse direction
+        leftMotor->setSpeed(correctionLeftSpeed);
+        rightMotor->setSpeed(correctionRightSpeed);
+        leftMotor->update();
+        rightMotor->update();
+        
+        // Update last known position to opposite direction
+        state.lastKnownPosition = -state.lastKnownPosition;
+        
+        turnTimer.start(); // Reset timer for the new direction
       }
-      
-      lineSensor.readSensors();
-      int tempPosition = lineSensor.getPosition();
-      int tempBlackCount = lineSensor.getBlackSensorCount();
-      
-      // Exit turn if line is centered or we have good sensor coverage
-      if ((abs(tempPosition) < state.straightThreshold && tempBlackCount >= minSensorsForLine) || 
-          tempBlackCount >= 4) {
-        state.linePosition = tempPosition;
-        lineFound = true;
-      }
-      
-      delay(10);
     }
     
-    leftMotor->brake();
-    rightMotor->brake();
     return false; // Continue line following
   }
 
@@ -258,21 +311,22 @@ private:
    * Update turn counters based on current movement direction
    */
   void updateTurnCounters(bool isTurningLeft, bool isTurningRight, bool isGoingForward) {
+    int countLimit = 40; // Increased count limit for more stability
     if (isTurningLeft) {
       state.leftTurnCount++;
-      if (state.leftTurnCount > 3) {
+      if (state.leftTurnCount > countLimit) {
         state.rightTurnCount = 0;
         state.forwardCount = 0;
       }
     } else if (isTurningRight) {
       state.rightTurnCount++;
-      if (state.rightTurnCount > 3) {
+      if (state.rightTurnCount > countLimit) {
         state.leftTurnCount = 0;
         state.forwardCount = 0;
       }
     } else if (isGoingForward) {
       state.forwardCount++;
-      if (state.forwardCount > 3) {
+      if (state.forwardCount > countLimit) {
         state.leftTurnCount = 0;
         state.rightTurnCount = 0;
       }
@@ -309,51 +363,79 @@ private:
    * Update the OLED display with current line following status
    */
   void updateDisplay(int avgBlackCount) {
-    // Row 0 (line 2): Values for POS, State, BLK
-    u8x8.setCursor(0, 2);
-    u8x8.print("     ");
-    u8x8.setCursor(0, 2);
-    u8x8.print(state.linePosition);
-    
-    u8x8.setCursor(5, 2);
-    switch (state.currentTurningState) {
-      case PID_TURNING:
-        if (state.linePosition > state.straightThreshold) {
-          u8x8.print("PL ");
-        } else if (state.linePosition < -state.straightThreshold) {
-          u8x8.print("PR ");
-        } else {
-          u8x8.print("PF ");
-        }
-        break;
-      case TURN_LEFT:
-        u8x8.print("LFT");
-        break;
-      case TURN_RIGHT:
-        u8x8.print("RGT");
-        break;
+    // Skip display updates if flag is set
+    if (state.skipDisplay) {
+      return;
     }
     
-    u8x8.setCursor(10, 2);
-    u8x8.print("   ");
-    u8x8.setCursor(10, 2);
-    u8x8.print(avgBlackCount);
+    // Update position only if changed
+    if (state.linePosition != state.lastDisplayedPosition) {
+    //   u8x8.setCursor(0, 2);
+    //   u8x8.print("     ");
+      u8x8.setCursor(0, 2);
+      u8x8.print(state.linePosition);
+      state.lastDisplayedPosition = state.linePosition;
+    }
     
-    // Row 2 (line 6): Turn counters
-    u8x8.setCursor(3, 6);
-    u8x8.print("   ");
-    u8x8.setCursor(3, 6);
-    u8x8.print(state.leftTurnCount);
+    // Update state only if changed
+    if (state.currentTurningState != state.lastDisplayedState || 
+        state.linePosition != state.lastDisplayedPosition) {
+      u8x8.setCursor(5, 2);
+      switch (state.currentTurningState) {
+        case PID_TURNING:
+          if (state.linePosition > state.straightThreshold) {
+            u8x8.print("PL ");
+          } else if (state.linePosition < -state.straightThreshold) {
+            u8x8.print("PR ");
+          } else {
+            u8x8.print("PF ");
+          }
+          break;
+        case TURN_LEFT:
+          u8x8.print("LFT");
+          break;
+        case TURN_RIGHT:
+          u8x8.print("RGT");
+          break;
+      }
+      state.lastDisplayedState = state.currentTurningState;
+    }
     
-    u8x8.setCursor(8, 6);
-    u8x8.print("   ");
-    u8x8.setCursor(8, 6);
-    u8x8.print(state.rightTurnCount);
+    // Update black count only if changed
+    if (avgBlackCount != state.lastDisplayedBlackCount) {
+    //   u8x8.setCursor(10, 2);
+    //   u8x8.print("   ");
+      u8x8.setCursor(10, 2);
+      u8x8.print(avgBlackCount);
+      state.lastDisplayedBlackCount = avgBlackCount;
+    }
     
-    u8x8.setCursor(13, 6);
-    u8x8.print("  ");
-    u8x8.setCursor(13, 6);
-    u8x8.print(state.forwardCount);
+    // Update left turn count only if changed
+    if (state.leftTurnCount != state.lastDisplayedLeftTurnCount) {
+    //   u8x8.setCursor(3, 6);
+    //   u8x8.print("   ");
+      u8x8.setCursor(3, 6);
+      u8x8.print(state.leftTurnCount);
+      state.lastDisplayedLeftTurnCount = state.leftTurnCount;
+    }
+    
+    // Update right turn count only if changed
+    if (state.rightTurnCount != state.lastDisplayedRightTurnCount) {
+    //   u8x8.setCursor(8, 6);
+    //   u8x8.print("   ");
+      u8x8.setCursor(8, 6);
+      u8x8.print(state.rightTurnCount);
+      state.lastDisplayedRightTurnCount = state.rightTurnCount;
+    }
+    
+    // Update forward count only if changed
+    if (state.forwardCount != state.lastDisplayedForwardCount) {
+    //   u8x8.setCursor(13, 6);
+    //   u8x8.print("  ");
+      u8x8.setCursor(13, 6);
+      u8x8.print(state.forwardCount);
+      state.lastDisplayedForwardCount = state.forwardCount;
+    }
   }
 
   /**
@@ -423,9 +505,9 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller with settings from EEPROM
-    float kp = (float)settings.kp / settings.pidScale;
-    float ki = (float)settings.ki / settings.pidScale;
-    float kd = (float)settings.kd / settings.pidScale;
+    float kp = (float)55 / settings.pidScale;
+    float ki = (float)10   / settings.pidScale;
+    float kd = (float)1 / settings.pidScale;
     
     PIDController pid(kp, ki, kd);
     pid.setMaxOutput(510.0);
@@ -436,14 +518,15 @@ public:
     DEBUG_PRINT(" Ki: ");
     DEBUG_PRINT(ki);
     DEBUG_PRINT(" Kd: ");
-    DEBUG_PRINTLN(kd);
+    DEBUG_PRINTLN(kd); 
 
     settings.movementType = MovementType::AGGRESSIVE;
     deltaTimer.start();
 
     // Setup button for exit detection
     pinMode(HAL::UIPins::BUTTON, INPUT_PULLUP);
-
+    lineSensor.setThresholdRatio(ThresholdRatio::RATIO_15_16);
+    // state.loopDelay = 10;
     // Initialize line following state
     lineSensor.readSensors();
     state.linePosition = lineSensor.getPosition();
@@ -457,6 +540,11 @@ public:
     state.rightTurnCount = 0;
     state.forwardCount = 0;
     state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
+    
+    // Initialize dynamic speed control
+    state.currentBaseSpeed = 255;
+    state.hasEnteredAggressiveTurn = false;
+    state.lastStraightSpeedIncrease = 0;
 
     // Initialize display
     initializeDisplay();
@@ -478,7 +566,7 @@ public:
       
       // Read sensor data and determine turning state
       int blackCount = lineSensor.getBlackSensorCount();
-      determineTurningState(blackCount);
+      determineTurningState(blackCount, leftMotor, rightMotor);
 
       int leftSpeed = 0, rightSpeed = 0;
       bool isTurningLeft = false;
@@ -494,7 +582,7 @@ public:
           break;
           
         case TURN_LEFT:
-          if (executeAggressiveLeftTurnUntilLineFound()) {
+          if (executeAggressiveTurnUntilLineFound(TURN_LEFT)) {
             goto exitLineFollowing; // Exit if button pressed during turn
           }
           isTurningLeft = true;
@@ -502,7 +590,7 @@ public:
           break;
           
         case TURN_RIGHT:
-          if (executeAggressiveRightTurnUntilLineFound()) {
+          if (executeAggressiveTurnUntilLineFound(TURN_RIGHT)) {
             goto exitLineFollowing; // Exit if button pressed during turn
           }
           isTurningRight = true;
