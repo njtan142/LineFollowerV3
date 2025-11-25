@@ -47,7 +47,7 @@ private:
     const int straightThreshold = 750;
     const unsigned long movementDuration = 10;
     const unsigned long loopDelay = 0;
-    const unsigned long stateChangeDelay = 1;
+    const unsigned long stateChangeDelay = 1000;
     
     // Dynamic speed control
     int currentBaseSpeed = 255;
