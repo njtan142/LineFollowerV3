@@ -204,6 +204,13 @@ class LineSensor {
          * @return true if pattern is valid (continuous), false if noise detected
          */
         bool isValidSensorPattern();
+        
+        /**
+         * Corrects sensor pattern by finding longest consecutive sequence
+         * Removes isolated sensors and keeps only the longest continuous group
+         * Private - called automatically when invalid pattern is detected
+         */
+        void correctSensorPattern();
 };
 
 #endif

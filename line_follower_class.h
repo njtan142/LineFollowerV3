@@ -26,8 +26,14 @@ private:
   // State data
   struct State {
     int linePosition;
+    int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 100;
+    int baseSpeed = 50;
+    int turnSpeed = 50;
+    int backwardBias = -15;
+    unsigned long turnTimeout = 1000;
+    int minSensorsForLine = 2;
+    unsigned long lineFoundDelay = 100;
   };
 
   State state;
@@ -68,6 +74,119 @@ private:
     return false;
   }
 
+  /**
+   * Display line found information and wait for button press
+   */
+  void displayLineFoundInfo() {
+    u8x8.clear();
+    u8x8.setCursor(0, 0);
+    u8x8.print("LINE FOUND!");
+    
+    u8x8.setCursor(0, 2);
+    u8x8.print("POS:");
+    u8x8.print(state.linePosition);
+    u8x8.print(" S:");
+    u8x8.print(lineSensor.getBlackSensorCount());
+    
+    u8x8.setCursor(0, 4);
+    const int* sensorValues = lineSensor.getSensorValues();
+    for (int i = 0; i < 8; i++) {
+      u8x8.print(sensorValues[i] > lineSensor.getSensorThreshold()[i] ? "1" : "0");
+    }
+    
+    // Wait for button press to continue
+    state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
+    while (true) {
+      if (checkForButtonPress()) {
+        break;
+      }
+      delay(50);
+    }
+    
+    u8x8.clear();
+  }
+
+  /**
+   * Execute aggressive turn until line is found
+   */
+  void executeAggressiveTurn(bool turnLeft, PIDController& pid) {
+    int leftSpeed, rightSpeed;
+    
+    // Set turn direction with backward bias
+    if (turnLeft) {
+      leftSpeed = -state.turnSpeed + state.backwardBias;
+      rightSpeed = state.turnSpeed + state.backwardBias;
+    } else {
+      rightSpeed = -state.turnSpeed + state.backwardBias;
+      leftSpeed = state.turnSpeed + state.backwardBias;
+    }
+    
+    leftMotor->setSpeed(leftSpeed);
+    rightMotor->setSpeed(rightSpeed);
+    leftMotor->update();
+    rightMotor->update();
+    
+    Timer turnTimer;
+    turnTimer.start();
+    bool lineFound = false;
+    
+    while (!lineFound && turnTimer.elapsed() < state.turnTimeout) {
+      lineSensor.readSensors();
+      int tempPosition = lineSensor.getPosition();
+      int tempBlackCount = lineSensor.getBlackSensorCount();
+      
+      // Exit turn if line is found with good sensor coverage and centered
+      // Bias towards center sensors (position closer to 0)
+      if (tempBlackCount >= state.minSensorsForLine && abs(tempPosition) < 2000) {
+        state.linePosition = tempPosition;
+        lineFound = true;
+        pid.reset(); // Reset PID integral when back on line
+        leftMotor->brake();
+        rightMotor->brake();
+        delay(state.lineFoundDelay);
+        // displayLineFoundInfo();
+        DEBUG_PRINTLN("Line found - PID reset");
+      }
+    }
+    
+    // If timeout, try opposite direction
+    if (!lineFound) {
+      DEBUG_PRINTLN("Turn timeout - trying opposite direction");
+      
+      // Reverse direction
+      leftSpeed = -leftSpeed;
+      rightSpeed = -rightSpeed;
+      
+      leftMotor->setSpeed(leftSpeed);
+      rightMotor->setSpeed(rightSpeed);
+      leftMotor->update();
+      rightMotor->update();
+      
+      turnTimer.start();
+      
+      while (!lineFound) {
+        lineSensor.readSensors();
+        int tempPosition = lineSensor.getPosition();
+        int tempBlackCount = lineSensor.getBlackSensorCount();
+        
+        // Exit turn if line is found with good sensor coverage and centered
+        if (tempBlackCount >= state.minSensorsForLine && abs(tempPosition) < 2000) {
+          state.linePosition = tempPosition;
+          lineFound = true;
+          leftMotor->brake();
+          rightMotor->brake();
+          delay(state.lineFoundDelay);
+          pid.reset(); // Reset PID integral when back on line
+          // displayLineFoundInfo();
+          DEBUG_PRINTLN("Line found - PID reset");
+        }
+      }
+    }
+    
+    leftMotor->brake();
+    rightMotor->brake();
+  }
+
 public:
   /**
    * Run simple line following with PID control
@@ -88,7 +207,10 @@ public:
     pinMode(HAL::UIPins::BUTTON, INPUT_PULLUP);
     state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
 
-    lineSensor.setThresholdRatio(ThresholdRatio::RATIO_1_2);
+    lineSensor.setThresholdRatio(ThresholdRatio::RATIO_15_16);
+    
+    // Initialize state
+    state.lastKnownPosition = 0;
     
     // Initialize display
     initializeDisplay();
@@ -105,24 +227,35 @@ public:
       state.linePosition = lineSensor.getPosition();
       int blackCount = lineSensor.getBlackSensorCount();
 
-      // Calculate PID correction
-      float correction = pid.compute(0, state.linePosition);
-      
-      // Apply differential steering
-      int leftSpeed = state.baseSpeed + correction;
-      int rightSpeed = state.baseSpeed - correction;
-      
-      // Clamp speeds
-      leftSpeed = constrain(leftSpeed, -255, 255);
-      rightSpeed = constrain(rightSpeed, -255, 255);
+      // Check if line is lost
+      if (blackCount == 0) {
+        // Line lost - execute aggressive turn
+        bool turnLeft = (state.lastKnownPosition > 0);
+        executeAggressiveTurn(turnLeft, pid);
+      } else {
+        // Update last known position
+        if (abs(state.linePosition) > 500) {
+          state.lastKnownPosition = state.linePosition;
+        }
+        
+        // Calculate PID correction
+        float correction = pid.compute(0, state.linePosition);
+        
+        // Apply differential steering
+        int leftSpeed = state.baseSpeed + correction;
+        int rightSpeed = state.baseSpeed - correction;
+        
+        // Clamp speeds
+        leftSpeed = constrain(leftSpeed, -255, 255);
+        rightSpeed = constrain(rightSpeed, -255, 255);
 
-      // Set motor speeds
-      leftMotor->setSpeed(leftSpeed);
-      rightMotor->setSpeed(rightSpeed);
-      leftMotor->update();
-      rightMotor->update();
+        // Set motor speeds
+        leftMotor->setSpeed(leftSpeed);
+        rightMotor->setSpeed(rightSpeed);
+        leftMotor->update();
+        rightMotor->update();
+      }
 
-      delay(10);
     }
 
     // Stop motors and show exit message

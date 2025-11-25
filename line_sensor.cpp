@@ -183,9 +183,9 @@ int LineSensor::getPosition(){
     // }
     
     // Check if sensor pattern is valid (no gaps in black sensors)
-    // If invalid pattern detected (likely noise), return last known position
+    // If invalid pattern detected (noise), correct it by finding longest consecutive sequence
     if (!isValidSensorPattern()) {
-        return lastPosition;
+        correctSensorPattern();
     }
     
     // Calculate weighted average of sensors detecting the line
@@ -193,7 +193,7 @@ int LineSensor::getPosition(){
     long count = 0;
     for (int i = 0; i < SENSORCOUNT; i++) {
         // Sensor is "on line" if reading exceeds its threshold (darker = higher value)
-        bool onLine = sensorValues[i] > sensorThreshold[i];
+        bool onLine = sensorValues[i] >= sensorMax[i];
         if (onLine) {
             // Weight by sensor position (0-7) scaled by 1000 for precision
             // Index 0 = rightmost sensor, Index 7 = leftmost sensor
@@ -236,7 +236,7 @@ int LineSensor::getBlackSensorCount() {
     int count = 0;
     for (int i = 0; i < SENSORCOUNT; i++) {
         // Sensor detects black if reading exceeds its threshold
-        if (sensorValues[i] > sensorThreshold[i]) {
+        if (sensorValues[i] >= sensorMax[i]) {
             count++;
         }
     }
@@ -489,11 +489,122 @@ int LineSensor::getCalibrationQuality() {
 }
 
 /**
+ * Corrects sensor pattern by finding longest consecutive sequence
+ * 
+ * When sensors detect a pattern with gaps (noise), this function finds
+ * the longest continuous group of black sensors and removes outliers.
+ * 
+ * Examples:
+ *   00111101 -> 00111100 (removes isolated sensor at end)
+ *   11000011 -> 00011000 (multiple groups - center the pattern)
+ *   10101010 -> 00000000 (no valid consecutive group)
+ * 
+ * Special case: If there are multiple groups of equal length (indicating
+ * uncertain position), the pattern is centered instead of picking a side.
+ * 
+ * This filters noise while preserving the most likely true line position.
+ */
+void LineSensor::correctSensorPattern() {
+    // Build binary pattern of black sensors
+    bool blackSensors[SENSORCOUNT];
+    int blackCount = 0;
+    
+    for (int i = 0; i < SENSORCOUNT; i++) {
+        blackSensors[i] = sensorValues[i] > sensorThreshold[i];
+        if (blackSensors[i]) blackCount++;
+    }
+    
+    // Find all consecutive sequences of black sensors
+    struct Sequence {
+        int start;
+        int length;
+    };
+    Sequence sequences[SENSORCOUNT];
+    int seqCount = 0;
+    int currentLength = 0;
+    int currentStart = 0;
+    
+    for (int i = 0; i < SENSORCOUNT; i++) {
+        if (blackSensors[i]) {
+            if (currentLength == 0) {
+                currentStart = i;
+            }
+            currentLength++;
+        } else {
+            if (currentLength > 0) {
+                sequences[seqCount].start = currentStart;
+                sequences[seqCount].length = currentLength;
+                seqCount++;
+                currentLength = 0;
+            }
+        }
+    }
+    // Don't forget last sequence if it ends at the last sensor
+    if (currentLength > 0) {
+        sequences[seqCount].start = currentStart;
+        sequences[seqCount].length = currentLength;
+        seqCount++;
+    }
+    
+    // If no consecutive sequence found, clear all
+    if (seqCount == 0) {
+        for (int i = 0; i < SENSORCOUNT; i++) {
+            sensorValues[i] = sensorMin[i];
+        }
+        return;
+    }
+    
+    // Find the longest sequence
+    int maxLength = 0;
+    int maxStart = 0;
+    for (int i = 0; i < seqCount; i++) {
+        if (sequences[i].length > maxLength) {
+            maxLength = sequences[i].length;
+            maxStart = sequences[i].start;
+        }
+    }
+    
+    // Check if there are multiple groups with significant length (not just single sensors)
+    // This indicates uncertain position - center the pattern instead
+    bool hasMultipleSignificantGroups = false;
+    if (seqCount > 1) {
+        int significantGroups = 0;
+        for (int i = 0; i < seqCount; i++) {
+            if (sequences[i].length >= 2) {  // Groups of 2 or more sensors
+                significantGroups++;
+            }
+        }
+        if (significantGroups > 1) {
+            hasMultipleSignificantGroups = true;
+        }
+    }
+    
+    // If multiple significant groups exist, center the pattern
+    if (hasMultipleSignificantGroups) {
+        // Clear all and set center sensors
+        for (int i = 0; i < SENSORCOUNT; i++) {
+            sensorValues[i] = sensorMin[i];
+        }
+        // Activate center sensors (3 and 4)
+        sensorValues[3] = sensorMax[3];
+        sensorValues[4] = sensorMax[4];
+    } else {
+        // Keep only the longest consecutive sequence, clear others
+        for (int i = 0; i < SENSORCOUNT; i++) {
+            if (i < maxStart || i >= maxStart + maxLength) {
+                // Outside the longest sequence - set to white (min value)
+                sensorValues[i] = sensorMin[i];
+            }
+        }
+    }
+}
+
+/**
  * Validates sensor pattern to filter out noise
  * 
  * Checks if sensors detecting black form a continuous group without gaps.
  * Patterns like 11000011 or 00111101 indicate noise/interference and should
- * be rejected to prevent erratic position calculations.
+ * be corrected to prevent erratic position calculations.
  * 
  * Valid patterns: 00001111, 00011000, 11111111, 00000000, etc.
  * Invalid patterns: 11000011 (gap), 10101010 (alternating), 00111101 (gap)
