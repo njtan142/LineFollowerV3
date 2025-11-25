@@ -47,12 +47,21 @@ private:
     const int straightThreshold = 750;
     const unsigned long movementDuration = 10;
     const unsigned long loopDelay = 0;
-    const unsigned long stateChangeDelay = 1000;
+    const unsigned long stateChangeDelay = 10;
     
     // Dynamic speed control
-    int currentBaseSpeed = 255;
+    int currentBaseSpeed = 200;
     bool hasEnteredAggressiveTurn = false;
     unsigned long lastStraightSpeedIncrease = 0;
+    
+    // Aggressive turn configuration
+    int turnSpeed = 120;
+    int backwardBias = -5;
+    const unsigned long turnTimeout = 500;
+    int minSensorsForLine = 3;
+    
+    // Turn counter configuration
+    int countLimit = 40;
     
     // Last displayed values for change detection
     int lastDisplayedPosition = -99999;
@@ -159,23 +168,6 @@ private:
         } else {
           state.currentTurningState = TURN_LEFT;
         }
-        
-        // Handle speed reduction when entering aggressive turn
-        if (previousState == PID_TURNING) {
-          if (!state.hasEnteredAggressiveTurn) {
-            // First time entering aggressive turn - set speed to 170
-            state.currentBaseSpeed = 170;
-            state.hasEnteredAggressiveTurn = true;
-            DEBUG_PRINTLN("First aggressive turn - speed set to 170");
-          } else {
-            // Subsequent turns - reduce by 5
-            state.currentBaseSpeed -= 5;
-            state.currentBaseSpeed = constrain(state.currentBaseSpeed, 150, 255);
-            DEBUG_PRINT("Aggressive turn - speed reduced to: ");
-            DEBUG_PRINTLN(state.currentBaseSpeed);
-          }
-          state.lastStraightSpeedIncrease = 0; // Reset straight speed timer
-        }
       } else {
         // Keep using PID turning even when line is lost
         state.currentTurningState = PID_TURNING;
@@ -196,25 +188,9 @@ private:
     // Calculate PID correction (setpoint is 0 = line centered)
     float correction = pid.compute(0, state.linePosition);
     
-    // Check if position is within straight threshold and increase speed progressively
+    // Check if going forward for counter tracking
     if (abs(state.linePosition) < state.straightThreshold) {
-      unsigned long currentTime = millis();
-      if (state.lastStraightSpeedIncrease == 0) {
-        state.lastStraightSpeedIncrease = currentTime;
-      }
-      
-      // Add 10 speed per second (1000ms)
-      if (currentTime - state.lastStraightSpeedIncrease >= 1000) {
-        state.currentBaseSpeed += 10;
-        state.currentBaseSpeed = constrain(state.currentBaseSpeed, 0, 255);
-        state.lastStraightSpeedIncrease = currentTime;
-        DEBUG_PRINT("Speed increased to: ");
-        DEBUG_PRINTLN(state.currentBaseSpeed);
-      }
       isGoingForward = true;
-    } else {
-      // Reset timer when not going straight
-      state.lastStraightSpeedIncrease = 0;
     }
     
     // Apply correction using differential steering
@@ -240,26 +216,20 @@ private:
   bool executeAggressiveTurnUntilLineFound(TurningState direction) {
     int leftSpeed, rightSpeed;
     int correctionLeftSpeed, correctionRightSpeed;
-    int minSensorsForLine;
-    int turnSpeed = 200;
-    int backwardBias = -20; // Backward movement component
-    const unsigned long turnTimeout = 400; // Maximum time to turn in one direction (ms)
     
     // Set turn direction and correction direction with backward bias
     if (direction == TURN_LEFT) {
       // Turn left while moving backward: left motor more negative, right motor less positive
-      leftSpeed = -turnSpeed + backwardBias;
-      rightSpeed = turnSpeed + backwardBias;
-      correctionLeftSpeed = turnSpeed + backwardBias;   // Correction: turn right while backward
-      correctionRightSpeed = -turnSpeed + backwardBias;
-      minSensorsForLine = 3;
+      leftSpeed = -state.turnSpeed + state.backwardBias;
+      rightSpeed = state.turnSpeed + state.backwardBias;
+      correctionLeftSpeed = state.turnSpeed + state.backwardBias;   // Correction: turn right while backward
+      correctionRightSpeed = -state.turnSpeed + state.backwardBias;
     } else { // TURN_RIGHT
       // Turn right while moving backward: right motor more negative, left motor less positive
-      leftSpeed = turnSpeed + backwardBias;
-      rightSpeed = -turnSpeed + backwardBias;
-      correctionLeftSpeed = -turnSpeed + backwardBias;  // Correction: turn left while backward
-      correctionRightSpeed = turnSpeed + backwardBias;
-      minSensorsForLine = 3;
+      leftSpeed = state.turnSpeed + state.backwardBias;
+      rightSpeed = -state.turnSpeed + state.backwardBias;
+      correctionLeftSpeed = -state.turnSpeed + state.backwardBias;  // Correction: turn left while backward
+      correctionRightSpeed = state.turnSpeed + state.backwardBias;
     }
     
     leftMotor->setSpeed(leftSpeed);
@@ -268,6 +238,7 @@ private:
     rightMotor->update();
     
     bool lineFound = false;
+    bool isCorrectiveTurn = false;
     Timer turnTimer;
     turnTimer.start();
     
@@ -276,22 +247,24 @@ private:
       int tempPosition = lineSensor.getPosition();
       int tempBlackCount = lineSensor.getBlackSensorCount();
       
-      // Exit turn if line is centered or we have good sensor coverage
-      if ((abs(tempPosition) < state.straightThreshold && tempBlackCount >= minSensorsForLine) || 
-          tempBlackCount >= 4) {
+      // Exit turn if line is centered with good sensor coverage
+      // Ignore cases where all or most sensors are black (6+) as this indicates navigating an arc
+      if (abs(tempPosition) < state.straightThreshold && 
+          tempBlackCount >= state.minSensorsForLine && 
+          tempBlackCount < 6) {
         state.linePosition = tempPosition;
         lineFound = true;
         DEBUG_PRINTLN("Line found during turn!");
       }
       
-      // If timeout reached, switch direction
-      if (turnTimer.elapsed() >= turnTimeout) {
-        DEBUG_PRINTLN("Turn timeout - switching direction!");
+      // Only time the first turn, not the corrective turn
+      if (!isCorrectiveTurn && turnTimer.elapsed() >= state.turnTimeout) {
+        DEBUG_PRINTLN("Turn timeout - switching to corrective turn!");
         leftMotor->brake();
         rightMotor->brake();
         delay(50);
         
-        // Reverse direction
+        // Reverse direction for corrective turn
         leftMotor->setSpeed(correctionLeftSpeed);
         rightMotor->setSpeed(correctionRightSpeed);
         leftMotor->update();
@@ -299,8 +272,8 @@ private:
         
         // Update last known position to opposite direction
         state.lastKnownPosition = -state.lastKnownPosition;
-        
-        turnTimer.start(); // Reset timer for the new direction
+
+        isCorrectiveTurn = true; // Mark that we're now in corrective turn (no more timeouts)
       }
     }
     
@@ -311,22 +284,21 @@ private:
    * Update turn counters based on current movement direction
    */
   void updateTurnCounters(bool isTurningLeft, bool isTurningRight, bool isGoingForward) {
-    int countLimit = 40; // Increased count limit for more stability
     if (isTurningLeft) {
       state.leftTurnCount++;
-      if (state.leftTurnCount > countLimit) {
+      if (state.leftTurnCount > state.countLimit) {
         state.rightTurnCount = 0;
         state.forwardCount = 0;
       }
     } else if (isTurningRight) {
       state.rightTurnCount++;
-      if (state.rightTurnCount > countLimit) {
+      if (state.rightTurnCount > state.countLimit) {
         state.leftTurnCount = 0;
         state.forwardCount = 0;
       }
     } else if (isGoingForward) {
       state.forwardCount++;
-      if (state.forwardCount > countLimit) {
+      if (state.forwardCount > state.countLimit) {
         state.leftTurnCount = 0;
         state.rightTurnCount = 0;
       }
@@ -505,9 +477,9 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller with settings from EEPROM
-    float kp = (float)55 / settings.pidScale;
-    float ki = (float)10   / settings.pidScale;
-    float kd = (float)1 / settings.pidScale;
+    float kp = (float)50 / settings.pidScale;
+    float ki = (float)0   / settings.pidScale;
+    float kd = (float)0 / settings.pidScale;
     
     PIDController pid(kp, ki, kd);
     pid.setMaxOutput(510.0);
@@ -542,7 +514,6 @@ public:
     state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
     
     // Initialize dynamic speed control
-    state.currentBaseSpeed = 255;
     state.hasEnteredAggressiveTurn = false;
     state.lastStraightSpeedIncrease = 0;
 
