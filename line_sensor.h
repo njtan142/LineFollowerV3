@@ -197,6 +197,13 @@ class LineSensor {
          * Private - called automatically when needed
          */
         void updateThresholds();
+        
+        /**
+         * Validates sensor pattern to filter out noise
+         * Checks if black sensors form a continuous group without gaps
+         * @return true if pattern is valid (continuous), false if noise detected
+         */
+        bool isValidSensorPattern();
 };
 
 #endif

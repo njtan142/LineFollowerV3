@@ -182,6 +182,12 @@ int LineSensor::getPosition(){
     //     return lastPosition;
     // }
     
+    // Check if sensor pattern is valid (no gaps in black sensors)
+    // If invalid pattern detected (likely noise), return last known position
+    if (!isValidSensorPattern()) {
+        return lastPosition;
+    }
+    
     // Calculate weighted average of sensors detecting the line
     long weighted = 0;
     long count = 0;
@@ -480,4 +486,46 @@ int LineSensor::getCalibrationQuality() {
     }
     
     return avgQuality;
+}
+
+/**
+ * Validates sensor pattern to filter out noise
+ * 
+ * Checks if sensors detecting black form a continuous group without gaps.
+ * Patterns like 11000011 or 00111101 indicate noise/interference and should
+ * be rejected to prevent erratic position calculations.
+ * 
+ * Valid patterns: 00001111, 00011000, 11111111, 00000000, etc.
+ * Invalid patterns: 11000011 (gap), 10101010 (alternating), 00111101 (gap)
+ * 
+ * @return true if pattern is valid (no gaps), false if noise detected
+ */
+bool LineSensor::isValidSensorPattern() {
+    // Build binary pattern of black sensors
+    bool blackSensors[SENSORCOUNT];
+    int blackCount = 0;
+    int firstBlack = -1;
+    int lastBlack = -1;
+    
+    for (int i = 0; i < SENSORCOUNT; i++) {
+        blackSensors[i] = sensorValues[i] > sensorThreshold[i];
+        if (blackSensors[i]) {
+            blackCount++;
+            if (firstBlack == -1) firstBlack = i;
+            lastBlack = i;
+        }
+    }
+    
+    // No sensors or all sensors black is always valid
+    if (blackCount == 0 || blackCount == SENSORCOUNT) {
+        return true;
+    }
+    
+    // Check if all black sensors form a continuous group
+    // Count how many black sensors exist between first and last black sensor
+    int expectedBlack = lastBlack - firstBlack + 1;
+    
+    // If actual black count matches expected, pattern is continuous (valid)
+    // If less, there's a gap (invalid/noise)
+    return blackCount == expectedBlack;
 }
