@@ -87,6 +87,8 @@ public:
     // Setup button and sensors
     pinMode(HAL::UIPins::BUTTON, INPUT_PULLUP);
     state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
+
+    lineSensor.setThresholdRatio(ThresholdRatio::RATIO_1_2);
     
     // Initialize display
     initializeDisplay();
