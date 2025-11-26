@@ -28,15 +28,15 @@ private:
     int linePosition;
     int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 100;
+    int baseSpeed = 110;
     int turnSpeed = 50;
     int backwardBias = -18;
-    unsigned long turnTimeout = 1000;
+    unsigned long turnTimeout = 1100;
     int minSensorsForLine = 2;
     unsigned long stateChangeDelay = 50;
     bool skipDisplayLineFoundInfo = true;
     bool skipDisplayLineLostInfo = true;
-    int correctiveTurnMultiplier = 1.5;
+    int correctiveTurnMultiplier = 1.6;
     int maxCorrectiveTurnSpeed = 200;
   };
 
@@ -278,7 +278,7 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller
-    float kp = (float)40 / settings.pidScale;
+    float kp = (float)47.5 / settings.pidScale;
     float ki = (float)0 / settings.pidScale;
     float kd = (float)0.35 / settings.pidScale;
     
