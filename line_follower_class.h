@@ -28,12 +28,14 @@ private:
     int linePosition;
     int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 70;
+    int baseSpeed = 80;
     int turnSpeed = 50;
     int backwardBias = -15;
     unsigned long turnTimeout = 1000;
     int minSensorsForLine = 2;
-    unsigned long lineFoundDelay = 50;
+    unsigned long stateChangeDelay = 50;
+    bool skipDisplayLineFoundInfo = false;
+    bool skipDisplayLineLostInfo = false;
   };
 
   State state;
@@ -75,9 +77,26 @@ private:
   }
 
   /**
+   * Wait for button press
+   */
+  void waitForButtonPress() {
+    state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
+    while (true) {
+      if (checkForButtonPress()) {
+        break;
+      }
+      delay(50);
+    }
+  }
+
+  /**
    * Display line found information and wait for button press
    */
   void displayLineFoundInfo() {
+    if (state.skipDisplayLineFoundInfo) {
+      return;
+    }
+    
     u8x8.clear();
     u8x8.setCursor(0, 0);
     u8x8.print("LINE FOUND!");
@@ -94,22 +113,41 @@ private:
       u8x8.print(sensorValues[i] > lineSensor.getSensorThreshold()[i] ? "1" : "0");
     }
     
-    // Wait for button press to continue
-    state.lastButtonState = digitalRead(HAL::UIPins::BUTTON);
-    while (true) {
-      if (checkForButtonPress()) {
-        break;
-      }
-      delay(50);
+    waitForButtonPress();
+    u8x8.clear();
+  }
+
+  /**
+   * Display line lost information and wait for button press
+   */
+  void displayLineLostInfo(bool turnLeft) {
+    if (state.skipDisplayLineLostInfo) {
+      return;
     }
     
     u8x8.clear();
+    u8x8.setCursor(0, 0);
+    u8x8.print("LINE LOST!");
+    u8x8.setCursor(0, 2);
+    u8x8.print("TURN ");
+    u8x8.print(turnLeft ? "LEFT" : "RIGHT");
+    u8x8.print(" ");
+    u8x8.print(state.lastKnownPosition);
+    u8x8.setCursor(0, 4);
+    const int* sensorValues = lineSensor.getSensorValues();
+    for (int i = 0; i < 8; i++) {
+      u8x8.print(sensorValues[i] > lineSensor.getSensorThreshold()[i] ? "1" : "0");
+    }
+    
+    waitForButtonPress();
   }
 
   /**
    * Execute aggressive turn until line is found
    */
   void executeAggressiveTurn(bool turnLeft, PIDController& pid) {
+    displayLineLostInfo(turnLeft);
+    
     int leftSpeed, rightSpeed;
     
     // Set turn direction with backward bias
@@ -138,14 +176,25 @@ private:
       // Exit turn if line is found with good sensor coverage and centered
       // Bias towards center sensors (position closer to 0)
       if (tempBlackCount >= state.minSensorsForLine && abs(tempPosition) < 2000) {
-        state.linePosition = tempPosition;
-        lineFound = true;
-        pid.reset(); // Reset PID integral when back on line
         leftMotor->brake();
         rightMotor->brake();
-        delay(state.lineFoundDelay);
-        // displayLineFoundInfo();
-        DEBUG_PRINTLN("Line found - PID reset");
+        delay(state.stateChangeDelay);
+        
+        // Sanity check: verify line is still visible
+        lineSensor.readSensors();
+        int sanityBlackCount = lineSensor.getBlackSensorCount();
+        
+        if (sanityBlackCount >= state.minSensorsForLine) {
+          // Line still visible - exit aggressive turn
+          state.linePosition = lineSensor.getPosition();
+          lineFound = true;
+          pid.reset(); // Reset PID integral when back on line
+          displayLineFoundInfo();
+          DEBUG_PRINTLN("Line found - PID reset");
+        } else {
+          // Line lost during sanity check - continue turning
+          DEBUG_PRINTLN("Sanity check failed: Line lost, continuing turn");
+        }
       }
     }
     
@@ -171,14 +220,25 @@ private:
         
         // Exit turn if line is found with good sensor coverage and centered
         if (tempBlackCount >= state.minSensorsForLine && abs(tempPosition) < 2000) {
-          state.linePosition = tempPosition;
-          lineFound = true;
           leftMotor->brake();
           rightMotor->brake();
-          delay(state.lineFoundDelay);
-          pid.reset(); // Reset PID integral when back on line
-          // displayLineFoundInfo();
-          DEBUG_PRINTLN("Line found - PID reset");
+          delay(state.stateChangeDelay);
+          
+          // Sanity check: verify line is still visible
+          lineSensor.readSensors();
+          int sanityBlackCount = lineSensor.getBlackSensorCount();
+          
+          if (sanityBlackCount >= state.minSensorsForLine) {
+            // Line still visible - exit aggressive turn
+            state.linePosition = lineSensor.getPosition();
+            lineFound = true;
+            pid.reset(); // Reset PID integral when back on line
+            displayLineFoundInfo();
+            DEBUG_PRINTLN("Line found - PID reset");
+          } else {
+            // Line lost during sanity check - continue turning
+            DEBUG_PRINTLN("Sanity check failed: Line lost, continuing turn");
+          }
         }
       }
     }
@@ -196,7 +256,7 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller
-    float kp = (float)27 / settings.pidScale;
+    float kp = (float)30 / settings.pidScale;
     float ki = (float)0 / settings.pidScale;
     float kd = (float)0.3 / settings.pidScale;
     
@@ -229,9 +289,24 @@ public:
 
       // Check if line is lost
       if (blackCount == 0) {
-        // Line lost - execute aggressive turn
-        bool turnLeft = (state.lastKnownPosition > 0);
-        executeAggressiveTurn(turnLeft, pid);
+        // Line lost - brake and wait before state change
+        leftMotor->brake();
+        rightMotor->brake();
+        delay(state.stateChangeDelay);
+        
+        // Sanity check: verify line is still lost
+        lineSensor.readSensors();
+        int sanityBlackCount = lineSensor.getBlackSensorCount();
+        
+        if (sanityBlackCount == 0) {
+          // Line still lost - execute aggressive turn
+          bool turnLeft = (state.lastKnownPosition > 0);
+          executeAggressiveTurn(turnLeft, pid);
+        } else {
+          // Line found during sanity check - update position and continue normal operation
+          state.linePosition = lineSensor.getPosition();
+          DEBUG_PRINTLN("Sanity check: Line found, skipping aggressive turn");
+        }
       } else {
         // Update last known position
         if (abs(state.linePosition) > 500) {
