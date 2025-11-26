@@ -28,9 +28,9 @@ private:
     int linePosition;
     int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 80;
+    int baseSpeed = 90;
     int turnSpeed = 50;
-    int backwardBias = -23;
+    int backwardBias = -21;
     unsigned long turnTimeout = 1000;
     int minSensorsForLine = 2;
     unsigned long stateChangeDelay = 50;
@@ -231,23 +231,35 @@ private:
       rightSpeed = -rightSpeed;
       bool oppositeDirection = !turnLeft;
       
-      // Try opposite direction (no timeout on this one)
-      leftMotor->setSpeed(leftSpeed);
-      rightMotor->setSpeed(rightSpeed);
-      leftMotor->update();
-      rightMotor->update();
+      // Try opposite direction with button check
+      lineFound = executeTurnDirection(leftSpeed, rightSpeed, pid, oppositeDirection);
       
-      while (!lineFound) {
-        lineSensor.readSensors();
-        int tempPosition = lineSensor.getPosition();
-        int tempBlackCount = lineSensor.getBlackSensorCount();
+      // If still not found after both directions, keep searching but allow exit
+      if (!lineFound) {
+        leftMotor->setSpeed(leftSpeed);
+        rightMotor->setSpeed(rightSpeed);
+        leftMotor->update();
+        rightMotor->update();
         
-        lineFound = checkLineFoundWithSanityCheck(tempBlackCount, tempPosition, pid, oppositeDirection);
+        while (!lineFound) {
+          // Check for exit button even during search
+          if (checkForButtonPress()) {
+            leftMotor->brake();
+            rightMotor->brake();
+            return; // Exit aggressive turn
+          }
+          
+          lineSensor.readSensors();
+          int tempPosition = lineSensor.getPosition();
+          int tempBlackCount = lineSensor.getBlackSensorCount();
+          
+          lineFound = checkLineFoundWithSanityCheck(tempBlackCount, tempPosition, pid, oppositeDirection);
+        }
       }
     }
     
-    leftMotor->brake();
-    rightMotor->brake();
+    // Motors are already braked by checkLineFoundWithSanityCheck
+    // Main loop will resume PID control immediately
   }
 
 public:
@@ -259,9 +271,9 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller
-    float kp = (float)30 / settings.pidScale;
+    float kp = (float)40 / settings.pidScale;
     float ki = (float)0 / settings.pidScale;
-    float kd = (float)0.3 / settings.pidScale;
+    float kd = (float)0.35 / settings.pidScale;
     
     PIDController pid(kp, ki, kd);
     pid.setMaxOutput(255.0);
@@ -285,10 +297,14 @@ public:
         break;
       }
 
-      // Read line position
+      // Read line position (already updated by aggressive turn if just recovered)
       lineSensor.readSensors();
-      state.linePosition = lineSensor.getPosition();
       int blackCount = lineSensor.getBlackSensorCount();
+      
+      // Only update position if line is visible
+      if (blackCount > 0) {
+        state.linePosition = lineSensor.getPosition();
+      }
 
       // Check if line is lost
       if (blackCount == 0) {
@@ -305,6 +321,16 @@ public:
           // Line still lost - execute aggressive turn
           bool turnLeft = (state.lastKnownPosition > 0);
           executeAggressiveTurn(turnLeft, pid);
+          
+          // Move forward a bit to ensure proper line engagement
+          leftMotor->setSpeed(state.baseSpeed);
+          rightMotor->setSpeed(state.baseSpeed);
+          leftMotor->update();
+          rightMotor->update();
+          delay(100);
+          
+          // After aggressive turn, continue to next iteration to read fresh sensors
+          continue;
         } else {
           // Line found during sanity check - update position and continue normal operation
           state.linePosition = lineSensor.getPosition();
