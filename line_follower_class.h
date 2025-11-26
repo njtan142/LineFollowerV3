@@ -28,7 +28,7 @@ private:
     int linePosition;
     int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 110;
+    int baseSpeed = 120;
     int turnSpeed = 50;
     int backwardBias = -18;
     unsigned long turnTimeout = 1100;
@@ -278,9 +278,9 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller
-    float kp = (float)47.5 / settings.pidScale;
+    float kp = (float)57.5 / settings.pidScale;
     float ki = (float)0 / settings.pidScale;
-    float kd = (float)0.35 / settings.pidScale;
+    float kd = (float)0.7 / settings.pidScale;
     
     PIDController pid(kp, ki, kd);
     pid.setMaxOutput(255.0);
