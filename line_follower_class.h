@@ -29,11 +29,11 @@ private:
     int lastKnownPosition;
     bool lastButtonState;
     int baseSpeed = 140;
-    int turnSpeed = 50;
+    int turnSpeed = 110;
     int backwardBias = -18;
-    unsigned long turnTimeout = 1100;
+    unsigned long turnTimeout = 550;
     int minSensorsForLine = 2;
-    unsigned long stateChangeDelay = 50;
+    unsigned long stateChangeDelay = 10;
     bool skipDisplayLineFoundInfo = true;
     bool skipDisplayLineLostInfo = true;
     int correctiveTurnMultiplier = 1.6;
