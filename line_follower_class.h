@@ -28,7 +28,7 @@ private:
     int linePosition;
     int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 120;
+    int baseSpeed = 130;
     int turnSpeed = 50;
     int backwardBias = -18;
     unsigned long turnTimeout = 1100;
