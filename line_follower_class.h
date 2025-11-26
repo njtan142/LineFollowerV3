@@ -280,7 +280,7 @@ public:
     // Initialize PID controller
     float kp = (float)62.5 / settings.pidScale;
     float ki = (float)0 / settings.pidScale;
-    float kd = (float)0.75 / settings.pidScale;
+    float kd = (float)0.85 / settings.pidScale;
     
     PIDController pid(kp, ki, kd);
     pid.setMaxOutput(255.0);
