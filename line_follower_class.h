@@ -30,12 +30,12 @@ private:
     bool lastButtonState;
     int baseSpeed = 80;
     int turnSpeed = 50;
-    int backwardBias = -15;
+    int backwardBias = -23;
     unsigned long turnTimeout = 1000;
     int minSensorsForLine = 2;
     unsigned long stateChangeDelay = 50;
-    bool skipDisplayLineFoundInfo = false;
-    bool skipDisplayLineLostInfo = false;
+    bool skipDisplayLineFoundInfo = true;
+    bool skipDisplayLineLostInfo = true;
   };
 
   State state;
@@ -148,9 +148,11 @@ private:
   bool checkLineFoundWithSanityCheck(int blackCount, int position, PIDController& pid, bool isTurningLeft) {
     // Check if line detected with minimum sensors and centered position
     // Also verify position matches turn direction (left turn = negative position, right turn = positive position)
+    // Reject if all sensors are black (11111111) - likely over the line or invalid reading
     bool positionMatchesTurnDirection = isTurningLeft ? (position < 0) : (position > 0);
+    bool allSensorsBlack = (blackCount >= 6);
     
-    if (blackCount >= state.minSensorsForLine && abs(position) < 2000 && positionMatchesTurnDirection) {
+    if (blackCount >= state.minSensorsForLine && abs(position) < 2000 && positionMatchesTurnDirection && !allSensorsBlack) {
       leftMotor->brake();
       rightMotor->brake();
       delay(state.stateChangeDelay);
@@ -159,16 +161,16 @@ private:
       lineSensor.readSensors();
       int sanityBlackCount = lineSensor.getBlackSensorCount();
       
-      if (sanityBlackCount >= state.minSensorsForLine) {
-        // Line still visible - confirmed found
+      if (sanityBlackCount >= state.minSensorsForLine && sanityBlackCount < 8) {
+        // Line still visible and not all sensors - confirmed found
         state.linePosition = lineSensor.getPosition();
         pid.reset(); // Reset PID integral when back on line
         displayLineFoundInfo();
         DEBUG_PRINTLN("Line found - PID reset");
         return true;
       } else {
-        // Line lost during sanity check - false detection
-        DEBUG_PRINTLN("Sanity check failed: Line lost, continuing turn");
+        // Line lost during sanity check or all sensors black - false detection
+        DEBUG_PRINTLN("Sanity check failed: Line lost or invalid, continuing turn");
         return false;
       }
     }
