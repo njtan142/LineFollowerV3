@@ -143,6 +143,64 @@ private:
   }
 
   /**
+   * Check if line is found and perform sanity check before exiting turn
+   */
+  bool checkLineFoundWithSanityCheck(int blackCount, int position, PIDController& pid, bool isTurningLeft) {
+    // Check if line detected with minimum sensors and centered position
+    // Also verify position matches turn direction (left turn = negative position, right turn = positive position)
+    bool positionMatchesTurnDirection = isTurningLeft ? (position < 0) : (position > 0);
+    
+    if (blackCount >= state.minSensorsForLine && abs(position) < 2000 && positionMatchesTurnDirection) {
+      leftMotor->brake();
+      rightMotor->brake();
+      delay(state.stateChangeDelay);
+      
+      // Sanity check: verify line is still visible
+      lineSensor.readSensors();
+      int sanityBlackCount = lineSensor.getBlackSensorCount();
+      
+      if (sanityBlackCount >= state.minSensorsForLine) {
+        // Line still visible - confirmed found
+        state.linePosition = lineSensor.getPosition();
+        pid.reset(); // Reset PID integral when back on line
+        displayLineFoundInfo();
+        DEBUG_PRINTLN("Line found - PID reset");
+        return true;
+      } else {
+        // Line lost during sanity check - false detection
+        DEBUG_PRINTLN("Sanity check failed: Line lost, continuing turn");
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Execute turn in one direction with timeout
+   */
+  bool executeTurnDirection(int leftSpeed, int rightSpeed, PIDController& pid, bool isTurningLeft) {
+    leftMotor->setSpeed(leftSpeed);
+    rightMotor->setSpeed(rightSpeed);
+    leftMotor->update();
+    rightMotor->update();
+    
+    Timer turnTimer;
+    turnTimer.start();
+    
+    while (turnTimer.elapsed() < state.turnTimeout) {
+      lineSensor.readSensors();
+      int tempPosition = lineSensor.getPosition();
+      int tempBlackCount = lineSensor.getBlackSensorCount();
+      
+      if (checkLineFoundWithSanityCheck(tempBlackCount, tempPosition, pid, isTurningLeft)) {
+        return true; // Line found
+      }
+    }
+    
+    return false; // Timeout - line not found
+  }
+
+  /**
    * Execute aggressive turn until line is found
    */
   void executeAggressiveTurn(bool turnLeft, PIDController& pid) {
@@ -159,44 +217,8 @@ private:
       leftSpeed = state.turnSpeed + state.backwardBias;
     }
     
-    leftMotor->setSpeed(leftSpeed);
-    rightMotor->setSpeed(rightSpeed);
-    leftMotor->update();
-    rightMotor->update();
-    
-    Timer turnTimer;
-    turnTimer.start();
-    bool lineFound = false;
-    
-    while (!lineFound && turnTimer.elapsed() < state.turnTimeout) {
-      lineSensor.readSensors();
-      int tempPosition = lineSensor.getPosition();
-      int tempBlackCount = lineSensor.getBlackSensorCount();
-      
-      // Exit turn if line is found with good sensor coverage and centered
-      // Bias towards center sensors (position closer to 0)
-      if (tempBlackCount >= state.minSensorsForLine && abs(tempPosition) < 2000) {
-        leftMotor->brake();
-        rightMotor->brake();
-        delay(state.stateChangeDelay);
-        
-        // Sanity check: verify line is still visible
-        lineSensor.readSensors();
-        int sanityBlackCount = lineSensor.getBlackSensorCount();
-        
-        if (sanityBlackCount >= state.minSensorsForLine) {
-          // Line still visible - exit aggressive turn
-          state.linePosition = lineSensor.getPosition();
-          lineFound = true;
-          pid.reset(); // Reset PID integral when back on line
-          displayLineFoundInfo();
-          DEBUG_PRINTLN("Line found - PID reset");
-        } else {
-          // Line lost during sanity check - continue turning
-          DEBUG_PRINTLN("Sanity check failed: Line lost, continuing turn");
-        }
-      }
-    }
+    // Try first direction
+    bool lineFound = executeTurnDirection(leftSpeed, rightSpeed, pid, turnLeft);
     
     // If timeout, try opposite direction
     if (!lineFound) {
@@ -205,41 +227,20 @@ private:
       // Reverse direction
       leftSpeed = -leftSpeed;
       rightSpeed = -rightSpeed;
+      bool oppositeDirection = !turnLeft;
       
+      // Try opposite direction (no timeout on this one)
       leftMotor->setSpeed(leftSpeed);
       rightMotor->setSpeed(rightSpeed);
       leftMotor->update();
       rightMotor->update();
-      
-      turnTimer.start();
       
       while (!lineFound) {
         lineSensor.readSensors();
         int tempPosition = lineSensor.getPosition();
         int tempBlackCount = lineSensor.getBlackSensorCount();
         
-        // Exit turn if line is found with good sensor coverage and centered
-        if (tempBlackCount >= state.minSensorsForLine && abs(tempPosition) < 2000) {
-          leftMotor->brake();
-          rightMotor->brake();
-          delay(state.stateChangeDelay);
-          
-          // Sanity check: verify line is still visible
-          lineSensor.readSensors();
-          int sanityBlackCount = lineSensor.getBlackSensorCount();
-          
-          if (sanityBlackCount >= state.minSensorsForLine) {
-            // Line still visible - exit aggressive turn
-            state.linePosition = lineSensor.getPosition();
-            lineFound = true;
-            pid.reset(); // Reset PID integral when back on line
-            displayLineFoundInfo();
-            DEBUG_PRINTLN("Line found - PID reset");
-          } else {
-            // Line lost during sanity check - continue turning
-            DEBUG_PRINTLN("Sanity check failed: Line lost, continuing turn");
-          }
-        }
+        lineFound = checkLineFoundWithSanityCheck(tempBlackCount, tempPosition, pid, oppositeDirection);
       }
     }
     
