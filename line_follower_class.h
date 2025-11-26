@@ -36,6 +36,8 @@ private:
     unsigned long stateChangeDelay = 50;
     bool skipDisplayLineFoundInfo = true;
     bool skipDisplayLineLostInfo = true;
+    int correctiveTurnMultiplier = 2;
+    int maxCorrectiveTurnSpeed = 200;
   };
 
   State state;
@@ -226,9 +228,14 @@ private:
     if (!lineFound) {
       DEBUG_PRINTLN("Turn timeout - trying opposite direction");
       
-      // Reverse direction
-      leftSpeed = -leftSpeed;
-      rightSpeed = -rightSpeed;
+      // Reverse direction with increased speed for corrective turn
+      leftSpeed = -leftSpeed * state.correctiveTurnMultiplier;
+      rightSpeed = -rightSpeed * state.correctiveTurnMultiplier;
+      
+      // Clamp to max corrective turn speed
+      leftSpeed = constrain(leftSpeed, -state.maxCorrectiveTurnSpeed, state.maxCorrectiveTurnSpeed);
+      rightSpeed = constrain(rightSpeed, -state.maxCorrectiveTurnSpeed, state.maxCorrectiveTurnSpeed);
+      
       bool oppositeDirection = !turnLeft;
       
       // Try opposite direction with button check
