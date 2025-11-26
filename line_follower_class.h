@@ -28,12 +28,12 @@ private:
     int linePosition;
     int lastKnownPosition;
     bool lastButtonState;
-    int baseSpeed = 50;
+    int baseSpeed = 60;
     int turnSpeed = 50;
     int backwardBias = -15;
     unsigned long turnTimeout = 1000;
     int minSensorsForLine = 2;
-    unsigned long lineFoundDelay = 100;
+    unsigned long lineFoundDelay = 50;
   };
 
   State state;
@@ -196,7 +196,7 @@ public:
     displayStartupMessage();
 
     // Initialize PID controller
-    float kp = (float)10 / settings.pidScale;
+    float kp = (float)25 / settings.pidScale;
     float ki = (float)0 / settings.pidScale;
     float kd = (float)0 / settings.pidScale;
     
